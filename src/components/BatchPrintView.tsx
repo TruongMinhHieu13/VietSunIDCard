@@ -12,12 +12,15 @@ import {
   CreditCard,
   FileText,
   RefreshCw,
+  Calendar,
+  X,
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { AppSettings, CardTemplate, Employee } from '../types';
 import { IdCardPreview } from './IdCardPreview';
 import { triggerBrowserCtrlP } from '../utils/nativePrint';
+import { parseDateToUtcTimestamp } from './EmployeeManagementView';
 
 interface BatchPrintViewProps {
   employees: Employee[];
@@ -59,6 +62,8 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
   const [printStatusFilter, setPrintStatusFilter] = useState<
     'ALL' | 'UNPRINTED' | 'PRINTED'
   >('ALL');
+  const [joinDateFrom, setJoinDateFrom] = useState('');
+  const [joinDateTo, setJoinDateTo] = useState('');
 
   // Print Layout Settings
   const [printMethod, setPrintMethod] = useState<'a4_sheet' | 'cr80_printer'>(
@@ -107,6 +112,9 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
   }, [employees]);
 
   const filteredEmployees = useMemo(() => {
+    const fromTs = parseDateToUtcTimestamp(joinDateFrom);
+    const toTs = parseDateToUtcTimestamp(joinDateTo);
+
     return employees.filter((emp) => {
       const q = searchQuery.trim().toLowerCase();
       const matchQuery =
@@ -119,9 +127,21 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
         (printStatusFilter === 'UNPRINTED' &&
           (!emp.printCount || emp.printCount === 0)) ||
         (printStatusFilter === 'PRINTED' && emp.printCount > 0);
-      return matchQuery && matchDept && matchPrint;
+
+      let matchJoinDate = true;
+      if (fromTs !== null || toTs !== null) {
+        const empTs = parseDateToUtcTimestamp(emp.joinDate);
+        if (empTs === null) {
+          matchJoinDate = false;
+        } else {
+          if (fromTs !== null && empTs < fromTs) matchJoinDate = false;
+          if (toTs !== null && empTs > toTs) matchJoinDate = false;
+        }
+      }
+
+      return matchQuery && matchDept && matchPrint && matchJoinDate;
     });
-  }, [employees, searchQuery, deptFilter, printStatusFilter]);
+  }, [employees, searchQuery, deptFilter, printStatusFilter, joinDateFrom, joinDateTo]);
 
   const selectedEmployeesList = useMemo(() => {
     return employees.filter((emp) => selectedEmployeeIds.has(emp.id));
@@ -436,6 +456,42 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
                 <option value="UNPRINTED">Chưa in thẻ lần nào</option>
                 <option value="PRINTED">Đã từng in thẻ</option>
               </select>
+            </div>
+
+            {/* Join Date Range Filter */}
+            <div className="flex flex-wrap items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs">
+              <span className="inline-flex items-center gap-1 font-semibold text-slate-700">
+                <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                Ngày vào:
+              </span>
+              <input
+                type="date"
+                value={joinDateFrom}
+                onChange={(e) => setJoinDateFrom(e.target.value)}
+                className="px-1.5 py-0.5 border border-slate-300 rounded font-mono-num text-[11px]"
+                title="Từ ngày vào làm"
+              />
+              <span className="text-slate-400">→</span>
+              <input
+                type="date"
+                value={joinDateTo}
+                onChange={(e) => setJoinDateTo(e.target.value)}
+                className="px-1.5 py-0.5 border border-slate-300 rounded font-mono-num text-[11px]"
+                title="Đến ngày vào làm"
+              />
+              {(joinDateFrom || joinDateTo) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setJoinDateFrom('');
+                    setJoinDateTo('');
+                  }}
+                  className="p-0.5 text-red-600 hover:bg-red-50 rounded cursor-pointer"
+                  title="Xóa lọc ngày"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
 
             {/* Quick Batch Selection Buttons (1, 10, 50, All) */}

@@ -55,30 +55,49 @@ export const IdCardPreview: React.FC<IdCardPreviewProps> = ({
     printColorAdjust: 'exact',
   };
 
-  // Layout 1: VIETSUN ĐỒNG NAI (Authentic Table-Frame Design without red stamp)
+  // Layout 1: VIETSUN ĐỒNG NAI (Authentic Table-Frame Design with Vector SVG Grid Lines so lines never drop in window.print)
   if (template.layoutStyle === 'vietsun_table') {
-    const borderCol = template.borderColor || '#292524';
-    const photoWidthPct = Math.min(42, Math.max(22, template.photoWidthPercent || 28));
+    const borderCol = template.borderColor || '#1c1917';
+    const photoWidthPct = Math.min(42, Math.max(22, template.photoWidthPercent || 28.5));
+
+    // SVG coordinate system (804 x 488 matches the inner padded area 80.4mm x 48.8mm)
+    const innerLeft = 8;
+    const innerTop = 8;
+    const innerRight = 796;
+    const innerBottom = 480;
+    const innerW = innerRight - innerLeft; // 788
+    const innerH = innerBottom - innerTop; // 472
+
+    const headerRatio = 0.29;
+    const yHeaderLine = Math.round(innerTop + innerH * headerRatio); // 145
+    const xPhotoLine = Math.round(innerLeft + innerW * (photoWidthPct / 100)); // ~233
+
+    const bodyH = innerBottom - yHeaderLine; // 335
+    const yRow1 = Math.round(yHeaderLine + bodyH * 0.25);
+    const yRow2 = Math.round(yHeaderLine + bodyH * 0.5);
+    const yRow3 = Math.round(yHeaderLine + bodyH * 0.75);
 
     return (
       <div
         className={`relative select-none ${showCropMarks ? 'outline outline-1 outline-dashed outline-slate-300' : ''} ${className}`}
         style={containerStyle}
       >
-        <div className="w-full h-full p-[2.6mm] box-border">
-          {/* Outer double-line table frame */}
-          <div
-            className="w-full h-full border-[1.8px] p-[0.5mm] box-border"
-            style={{ borderColor: borderCol }}
-          >
+        <div className="w-full h-full p-[2.6mm] box-border relative">
+          <div className="w-full h-full relative">
+            {/* Content Layer (Aligned to the exact inner table coordinates) */}
             <div
-              className="w-full h-full border-[1px] flex flex-col relative box-border"
-              style={{ borderColor: borderCol }}
+              className="absolute flex flex-col box-border overflow-hidden"
+              style={{
+                left: `${(innerLeft / 804) * 100}%`,
+                top: `${(innerTop / 488) * 100}%`,
+                width: `${(innerW / 804) * 100}%`,
+                height: `${(innerH / 488) * 100}%`,
+              }}
             >
-              {/* Top Header Row (approx 29% height) */}
+              {/* Top Header Row (29% height) */}
               <div
-                className="h-[29%] w-full border-b-[1.4px] flex items-center px-2 box-border"
-                style={{ borderColor: borderCol }}
+                className="w-full flex items-center px-2 box-border shrink-0"
+                style={{ height: `${headerRatio * 100}%` }}
               >
                 {/* Top-Left Logo Block */}
                 <div
@@ -126,10 +145,9 @@ export const IdCardPreview: React.FC<IdCardPreviewProps> = ({
               <div className="flex-1 w-full flex overflow-hidden">
                 {/* Left Column: 3x4 Portrait Photo */}
                 <div
-                  className="h-full border-r-[1.4px] shrink-0 relative overflow-hidden"
+                  className="h-full shrink-0 relative overflow-hidden"
                   style={{
                     width: `${photoWidthPct}%`,
-                    borderColor: borderCol,
                     backgroundColor: template.photoBgColor || '#ffffff',
                   }}
                 >
@@ -151,10 +169,7 @@ export const IdCardPreview: React.FC<IdCardPreviewProps> = ({
                 {/* Right Column: 4 Horizontal Divided Rows */}
                 <div className="flex-1 h-full flex flex-col">
                   {/* Row 1: Full Name */}
-                  <div
-                    className="flex-1 border-b-[1.3px] flex items-center justify-center px-1.5 text-center overflow-hidden"
-                    style={{ borderColor: borderCol }}
-                  >
+                  <div className="flex-1 flex items-center justify-center px-1.5 text-center overflow-hidden">
                     <span
                       className="font-bold uppercase tracking-tight leading-tight truncate"
                       style={{
@@ -167,10 +182,7 @@ export const IdCardPreview: React.FC<IdCardPreviewProps> = ({
                   </div>
 
                   {/* Row 2: MSNV */}
-                  <div
-                    className="flex-1 border-b-[1.3px] flex items-center justify-center px-1.5 text-center overflow-hidden"
-                    style={{ borderColor: borderCol }}
-                  >
+                  <div className="flex-1 flex items-center justify-center px-1.5 text-center overflow-hidden">
                     <span
                       className="font-bold tracking-wide leading-none"
                       style={{
@@ -183,10 +195,7 @@ export const IdCardPreview: React.FC<IdCardPreviewProps> = ({
                   </div>
 
                   {/* Row 3: Department */}
-                  <div
-                    className="flex-1 border-b-[1.3px] flex items-center justify-center px-1.5 text-center overflow-hidden"
-                    style={{ borderColor: borderCol }}
-                  >
+                  <div className="flex-1 flex items-center justify-center px-1.5 text-center overflow-hidden">
                     <span
                       className="font-bold leading-tight truncate"
                       style={{
@@ -214,6 +223,80 @@ export const IdCardPreview: React.FC<IdCardPreviewProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* Vector SVG Table Frame & Grid Lines Overlay (z-20 so lines are never clipped or hidden in window.print) */}
+            <svg
+              viewBox="0 0 804 488"
+              preserveAspectRatio="none"
+              className="absolute inset-0 w-full h-full pointer-events-none z-20"
+              shapeRendering="geometricPrecision"
+            >
+              {/* Outer Thick Frame */}
+              <rect
+                x="1.5"
+                y="1.5"
+                width="801"
+                height="485"
+                fill="none"
+                stroke={borderCol}
+                strokeWidth="3.2"
+              />
+              {/* Inner Thin Frame */}
+              <rect
+                x={innerLeft}
+                y={innerTop}
+                width={innerW}
+                height={innerH}
+                fill="none"
+                stroke={borderCol}
+                strokeWidth="2.2"
+              />
+              {/* Full-Width Horizontal Line Below Header (Under Logo & Company Name) */}
+              <line
+                x1={innerLeft}
+                y1={yHeaderLine}
+                x2={innerRight}
+                y2={yHeaderLine}
+                stroke={borderCol}
+                strokeWidth="2.4"
+              />
+              {/* Vertical Line Separating 3x4 Photo Frame and 4 Info Rows */}
+              <line
+                x1={xPhotoLine}
+                y1={yHeaderLine}
+                x2={xPhotoLine}
+                y2={innerBottom}
+                stroke={borderCol}
+                strokeWidth="2.4"
+              />
+              {/* Horizontal Divider 1 (Below Full Name) */}
+              <line
+                x1={xPhotoLine}
+                y1={yRow1}
+                x2={innerRight}
+                y2={yRow1}
+                stroke={borderCol}
+                strokeWidth="2.2"
+              />
+              {/* Horizontal Divider 2 (Below MSNV) */}
+              <line
+                x1={xPhotoLine}
+                y1={yRow2}
+                x2={innerRight}
+                y2={yRow2}
+                stroke={borderCol}
+                strokeWidth="2.2"
+              />
+              {/* Horizontal Divider 3 (Below Department) */}
+              <line
+                x1={xPhotoLine}
+                y1={yRow3}
+                x2={innerRight}
+                y2={yRow3}
+                stroke={borderCol}
+                strokeWidth="2.2"
+              />
+            </svg>
           </div>
         </div>
       </div>
@@ -250,7 +333,7 @@ export const IdCardPreview: React.FC<IdCardPreviewProps> = ({
               className="w-[24mm] h-[31mm] border-2 rounded overflow-hidden shadow-xs"
               style={{
                 borderColor: template.primaryColor || '#1e40af',
-                backgroundColor: template.photoBgColor || '#1d4ed8',
+                backgroundColor: template.photoBgColor || '#ffffff',
               }}
             >
               {employee.photoUrl ? (
@@ -262,7 +345,7 @@ export const IdCardPreview: React.FC<IdCardPreviewProps> = ({
                 />
               ) : (
                 <DefaultPortraitAvatar
-                  bgColor={template.photoBgColor || '#1d4ed8'}
+                  bgColor={template.photoBgColor || '#ffffff'}
                   fullName={employee.fullName}
                 />
               )}
@@ -358,7 +441,7 @@ export const IdCardPreview: React.FC<IdCardPreviewProps> = ({
             style={{
               width: `${template.photoWidthPercent || 28}%`,
               borderColor: template.primaryColor || '#1d4ed8',
-              backgroundColor: template.photoBgColor || '#2563eb',
+              backgroundColor: template.photoBgColor || '#ffffff',
             }}
           >
             {employee.photoUrl ? (
@@ -370,7 +453,7 @@ export const IdCardPreview: React.FC<IdCardPreviewProps> = ({
               />
             ) : (
               <DefaultPortraitAvatar
-                bgColor={template.photoBgColor || '#2563eb'}
+                bgColor={template.photoBgColor || '#ffffff'}
                 fullName={employee.fullName}
               />
             )}

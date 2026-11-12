@@ -14,6 +14,7 @@ import {
   Upload,
   X,
   Database,
+  Calendar,
 } from 'lucide-react';
 import { CardTemplate, Employee } from '../types';
 import { IdCardPreview } from './IdCardPreview';
@@ -21,6 +22,29 @@ import {
   downloadSampleExcelTemplate,
   exportEmployeesToExcel,
 } from './ExcelImportModal';
+
+export function parseDateToUtcTimestamp(dateStr: string): number | null {
+  if (!dateStr) return null;
+  const s = dateStr.trim();
+  // Match DD/MM/YYYY or DD-MM-YYYY
+  const dmy = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dmy) {
+    const d = parseInt(dmy[1], 10);
+    const m = parseInt(dmy[2], 10);
+    const y = parseInt(dmy[3], 10);
+    return Date.UTC(y, m - 1, d);
+  }
+  // Match YYYY-MM-DD or YYYY/MM/DD
+  const ymd = s.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+  if (ymd) {
+    const y = parseInt(ymd[1], 10);
+    const m = parseInt(ymd[2], 10);
+    const d = parseInt(ymd[3], 10);
+    return Date.UTC(y, m - 1, d);
+  }
+  const parsed = Date.parse(s);
+  return isNaN(parsed) ? null : parsed;
+}
 
 interface EmployeeManagementViewProps {
   employees: Employee[];
@@ -69,6 +93,8 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [deptFilter, setDeptFilter] = useState('ALL');
   const [printStatusFilter, setPrintStatusFilter] = useState<'ALL' | 'PRINTED' | 'UNPRINTED'>('ALL');
+  const [joinDateFrom, setJoinDateFrom] = useState('');
+  const [joinDateTo, setJoinDateTo] = useState('');
 
   // Add/Edit Modal State
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -97,6 +123,9 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
   }, [employees]);
 
   const filteredEmployees = useMemo(() => {
+    const fromTs = parseDateToUtcTimestamp(joinDateFrom);
+    const toTs = parseDateToUtcTimestamp(joinDateTo);
+
     return employees.filter((emp) => {
       const q = searchQuery.trim().toLowerCase();
       const matchQuery =
@@ -108,9 +137,21 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
         printStatusFilter === 'ALL' ||
         (printStatusFilter === 'PRINTED' && emp.printCount > 0) ||
         (printStatusFilter === 'UNPRINTED' && (!emp.printCount || emp.printCount === 0));
-      return matchQuery && matchDept && matchPrinted;
+
+      let matchJoinDate = true;
+      if (fromTs !== null || toTs !== null) {
+        const empTs = parseDateToUtcTimestamp(emp.joinDate);
+        if (empTs === null) {
+          matchJoinDate = false;
+        } else {
+          if (fromTs !== null && empTs < fromTs) matchJoinDate = false;
+          if (toTs !== null && empTs > toTs) matchJoinDate = false;
+        }
+      }
+
+      return matchQuery && matchDept && matchPrinted && matchJoinDate;
     });
-  }, [employees, searchQuery, deptFilter, printStatusFilter]);
+  }, [employees, searchQuery, deptFilter, printStatusFilter, joinDateFrom, joinDateTo]);
 
   const openAddModal = () => {
     setEditingEmployee(null);
@@ -300,70 +341,125 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
       </div>
 
       {/* Filter & Batch Action Bar */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3 flex-1">
-          <div className="relative w-full sm:w-72">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Tìm kiếm theo Họ tên hoặc MSNV..."
-              className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:outline-none focus:border-blue-600"
-            />
+      <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3 flex-1">
+            <div className="relative w-full sm:w-64">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Tìm kiếm theo Họ tên hoặc MSNV..."
+                className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:outline-none focus:border-blue-600"
+              />
+            </div>
+
+            <select
+              value={deptFilter}
+              onChange={(e) => setDeptFilter(e.target.value)}
+              className="px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700"
+            >
+              <option value="ALL">Tất cả bộ phận ({departments.length})</option>
+              {departments.map((dept) => (
+                <option key={dept} value={dept}>
+                  {dept}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={printStatusFilter}
+              onChange={(e) =>
+                setPrintStatusFilter(e.target.value as 'ALL' | 'PRINTED' | 'UNPRINTED')
+              }
+              className="px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700"
+            >
+              <option value="ALL">Tất cả trạng thái in</option>
+              <option value="PRINTED">Đã in thẻ</option>
+              <option value="UNPRINTED">Chưa in thẻ</option>
+            </select>
+
+            {/* Join Date Range Filter (Lọc theo khoảng ngày vào làm) */}
+            <div className="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 text-xs">
+              <span className="inline-flex items-center gap-1 font-semibold text-slate-700">
+                <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                Ngày vào làm:
+              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-slate-500">Từ</span>
+                <input
+                  type="date"
+                  value={joinDateFrom}
+                  onChange={(e) => setJoinDateFrom(e.target.value)}
+                  className="px-2 py-0.5 bg-white border border-slate-300 rounded font-mono-num text-slate-800 focus:outline-none focus:border-blue-600"
+                  title="Từ ngày vào làm"
+                />
+                <span className="text-slate-500">đến</span>
+                <input
+                  type="date"
+                  value={joinDateTo}
+                  onChange={(e) => setJoinDateTo(e.target.value)}
+                  className="px-2 py-0.5 bg-white border border-slate-300 rounded font-mono-num text-slate-800 focus:outline-none focus:border-blue-600"
+                  title="Đến ngày vào làm"
+                />
+                {(joinDateFrom || joinDateTo) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setJoinDateFrom('');
+                      setJoinDateTo('');
+                    }}
+                    className="p-1 text-red-600 hover:bg-red-50 rounded cursor-pointer"
+                    title="Xóa lọc ngày vào làm"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
 
-          <select
-            value={deptFilter}
-            onChange={(e) => setDeptFilter(e.target.value)}
-            className="px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700"
-          >
-            <option value="ALL">Tất cả bộ phận ({departments.length})</option>
-            {departments.map((dept) => (
-              <option key={dept} value={dept}>
-                {dept}
-              </option>
-            ))}
-          </select>
+          {/* Batch Selection Action Buttons */}
+          <div className="flex flex-wrap items-center gap-2">
+            {filteredEmployees.length > 0 &&
+              (joinDateFrom || joinDateTo || deptFilter !== 'ALL' || searchQuery.trim()) && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onOpenPrintDialog(filteredEmployees.map((e) => e.id))
+                  }
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-lg cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  In {filteredEmployees.length} Thẻ Đang Lọc
+                </button>
+              )}
 
-          <select
-            value={printStatusFilter}
-            onChange={(e) =>
-              setPrintStatusFilter(e.target.value as 'ALL' | 'PRINTED' | 'UNPRINTED')
-            }
-            className="px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700"
-          >
-            <option value="ALL">Tất cả trạng thái in</option>
-            <option value="PRINTED">Đã in thẻ</option>
-            <option value="UNPRINTED">Chưa in thẻ</option>
-          </select>
-        </div>
-
-        {/* Batch Selection Action Buttons */}
-        <div className="flex items-center gap-2">
-          {selectedEmployeeIds.size > 0 && (
-            <>
-              <span className="text-xs font-mono-num font-bold text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200">
-                Đã chọn {selectedEmployeeIds.size} thẻ
-              </span>
-              <button
-                type="button"
-                onClick={() => onOpenPrintDialog(Array.from(selectedEmployeeIds))}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-lg cursor-pointer"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                In {selectedEmployeeIds.size} Thẻ Đã Chọn
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirmBatchDelete(true)}
-                className="inline-flex items-center gap-1 px-3 py-2 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg cursor-pointer"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                Xóa mục chọn
-              </button>
-            </>
-          )}
+            {selectedEmployeeIds.size > 0 && (
+              <>
+                <span className="text-xs font-mono-num font-bold text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200">
+                  Đã chọn {selectedEmployeeIds.size} thẻ
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onOpenPrintDialog(Array.from(selectedEmployeeIds))}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-lg cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  In {selectedEmployeeIds.size} Thẻ Đã Chọn
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmBatchDelete(true)}
+                  className="inline-flex items-center gap-1 px-3 py-2 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Xóa mục chọn
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
