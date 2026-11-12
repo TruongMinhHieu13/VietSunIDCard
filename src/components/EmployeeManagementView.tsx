@@ -15,6 +15,8 @@ import {
   X,
   Database,
   Calendar,
+  Camera,
+  CheckCircle2,
 } from 'lucide-react';
 import { CardTemplate, Employee } from '../types';
 import { IdCardPreview } from './IdCardPreview';
@@ -22,6 +24,40 @@ import {
   downloadSampleExcelTemplate,
   exportEmployeesToExcel,
 } from './ExcelImportModal';
+
+export function compressImageTo3x4DataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Không thể đọc file ảnh'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Định dạng ảnh không hợp lệ'));
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const targetW = 300;
+        const targetH = 400;
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Không thể xử lý khung ảnh 3x4'));
+          return;
+        }
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, targetW, targetH);
+        const scale = Math.max(targetW / img.width, targetH / img.height);
+        const drawW = img.width * scale;
+        const drawH = img.height * scale;
+        const dx = (targetW - drawW) / 2;
+        const dy = (targetH - drawH) / 2;
+        ctx.drawImage(img, dx, dy, drawW, drawH);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.src = String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 export function parseDateToUtcTimestamp(dateStr: string): number | null {
   if (!dateStr) return null;
@@ -106,6 +142,8 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
   const [photoUrl, setPhotoUrl] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadingPhotoEmpId, setUploadingPhotoEmpId] = useState<string | null>(null);
+  const [photoStatusBanner, setPhotoStatusBanner] = useState<string | null>(null);
 
   // Quick Card Preview Modal
   const [previewEmployee, setPreviewEmployee] = useState<Employee | null>(null);
@@ -175,37 +213,119 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
     setIsFormOpen(true);
   };
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    try {
+      const compressed = await compressImageTo3x4DataUrl(file);
+      setPhotoUrl(compressed);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Lỗi tải ảnh 3×4');
+    } finally {
+      e.target.value = '';
+    }
+  };
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        // Compress to standard 3x4 portrait resolution (300x400) so Firestore doc stays lightweight
-        const canvas = document.createElement('canvas');
-        const targetW = 300;
-        const targetH = 400;
-        canvas.width = targetW;
-        canvas.height = targetH;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.fillStyle = '#1d4ed8';
-          ctx.fillRect(0, 0, targetW, targetH);
-          const scale = Math.max(targetW / img.width, targetH / img.height);
-          const drawW = img.width * scale;
-          const drawH = img.height * scale;
-          const dx = (targetW - drawW) / 2;
-          const dy = (targetH - drawH) / 2;
-          ctx.drawImage(img, dx, dy, drawW, drawH);
-          const compressed = canvas.toDataURL('image/jpeg', 0.82);
-          setPhotoUrl(compressed);
+  // Direct 1-click 3x4 photo upload for a specific employee right from the table or preview modal
+  const handleDirectEmployeePhotoUpload = async (
+    emp: Employee,
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingPhotoEmpId(emp.id);
+    try {
+      const compressed = await compressImageTo3x4DataUrl(file);
+      await onUpdateEmployee(emp.id, {
+        msnv: emp.msnv,
+        fullName: emp.fullName,
+        department: emp.department,
+        joinDate: emp.joinDate,
+        photoUrl: compressed,
+      });
+      if (previewEmployee?.id === emp.id) {
+        setPreviewEmployee({ ...emp, photoUrl: compressed });
+      }
+      setPhotoStatusBanner(
+        `Đã cập nhật hình 3×4 cho nhân viên ${emp.fullName} (MSNV: ${emp.msnv})!`
+      );
+      setTimeout(() => setPhotoStatusBanner(null), 4000);
+    } finally {
+      setUploadingPhotoEmpId(null);
+      e.target.value = '';
+    }
+  };
+
+  const handleRemoveEmployeePhoto = async (emp: Employee) => {
+    setUploadingPhotoEmpId(emp.id);
+    try {
+      await onUpdateEmployee(emp.id, {
+        msnv: emp.msnv,
+        fullName: emp.fullName,
+        department: emp.department,
+        joinDate: emp.joinDate,
+        photoUrl: '',
+      });
+      if (previewEmployee?.id === emp.id) {
+        setPreviewEmployee({ ...emp, photoUrl: '' });
+      }
+      setPhotoStatusBanner(
+        `Đã xóa hình 3×4 của nhân viên ${emp.fullName} (MSNV: ${emp.msnv}).`
+      );
+      setTimeout(() => setPhotoStatusBanner(null), 3500);
+    } finally {
+      setUploadingPhotoEmpId(null);
+    }
+  };
+
+  // Bulk 3x4 photo upload matching filename with MSNV or Full Name
+  const handleBulkPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    let matchedCount = 0;
+    for (const file of files) {
+      const baseName = file.name
+        .replace(/\.[^/.]+$/, '')
+        .trim()
+        .toLowerCase();
+      const matchedEmp = employees.find((emp) => {
+        const msnvNorm = emp.msnv.trim().toLowerCase();
+        const nameNorm = emp.fullName.trim().toLowerCase();
+        return (
+          baseName === msnvNorm ||
+          baseName.includes(msnvNorm) ||
+          baseName === nameNorm
+        );
+      });
+      if (matchedEmp) {
+        try {
+          const compressed = await compressImageTo3x4DataUrl(file);
+          await onUpdateEmployee(matchedEmp.id, {
+            msnv: matchedEmp.msnv,
+            fullName: matchedEmp.fullName,
+            department: matchedEmp.department,
+            joinDate: matchedEmp.joinDate,
+            photoUrl: compressed,
+          });
+          matchedCount++;
+        } catch {
+          // ignore single invalid file
         }
-      };
-      img.src = String(reader.result);
-    };
-    reader.readAsDataURL(file);
+      }
+    }
+
+    if (matchedCount > 0) {
+      setPhotoStatusBanner(
+        `Đã ghép và cập nhật thành công ${matchedCount}/${files.length} ảnh 3×4 theo MSNV / Họ tên!`
+      );
+    } else {
+      setPhotoStatusBanner(
+        'Không tìm thấy nhân viên trùng khớp tên file ảnh. Mẹo: Đặt tên file ảnh theo MSNV (VD: 90993.jpg) hoặc bấm trực tiếp vào ô "Ảnh 3×4" của từng nhân viên.'
+      );
+    }
+    setTimeout(() => setPhotoStatusBanner(null), 6000);
+    e.target.value = '';
   };
 
   const handleSaveEmployeeForm = async (e: React.FormEvent) => {
@@ -295,7 +415,7 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
             Danh Sách Nhân Viên ({employees.length} nhân sự)
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Quản lý hồ sơ nhân viên, kiểm tra trùng MSNV, nhập/xuất file Excel và chọn in thẻ hàng loạt
+            Quản lý hồ sơ nhân viên, tải hình 3×4 trực tiếp cho từng nhân viên, nhập/xuất file Excel và in thẻ
           </p>
         </div>
 
@@ -309,6 +429,24 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
             <FileSpreadsheet className="w-4 h-4" />
             IMPORT EXCEL
           </button>
+
+          {/* BULK 3x4 PHOTO UPLOAD BY MSNV / NAME */}
+          {employees.length > 0 && (
+            <label
+              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded-lg cursor-pointer transition-colors"
+              title="Chọn nhiều ảnh 3×4 cùng lúc (đặt tên file ảnh theo MSNV như 90993.jpg để tự động ghép)"
+            >
+              <Camera className="w-3.5 h-3.5" />
+              Tải Ảnh 3×4 Hàng Loạt
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleBulkPhotoUpload}
+                className="hidden"
+              />
+            </label>
+          )}
 
           <button
             type="button"
@@ -339,6 +477,22 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
           </button>
         </div>
       </div>
+
+      {photoStatusBanner && (
+        <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{photoStatusBanner}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPhotoStatusBanner(null)}
+            className="p-1 text-emerald-700 hover:bg-emerald-100 rounded cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Filter & Batch Action Bar */}
       <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
@@ -512,18 +666,19 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
                       )}
                     </button>
                   </th>
-                  <th className="py-3 px-3 w-14 text-center">Ảnh</th>
+                  <th className="py-3 px-3 w-24 text-center">Ảnh 3×4</th>
                   <th className="py-3 px-4 w-28 font-mono-num">MSNV</th>
                   <th className="py-3 px-4">Họ và tên</th>
                   <th className="py-3 px-4">Bộ phận</th>
                   <th className="py-3 px-4 w-32 font-mono-num">Ngày vào làm</th>
                   <th className="py-3 px-4 w-40">Trạng thái in thẻ</th>
-                  <th className="py-3 px-4 w-36 text-right">Thao tác</th>
+                  <th className="py-3 px-4 w-56 text-right">Thao tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
                 {filteredEmployees.map((emp) => {
                   const isSelected = selectedEmployeeIds.has(emp.id);
+                  const isUploadingThis = uploadingPhotoEmpId === emp.id;
                   return (
                     <tr
                       key={emp.id}
@@ -547,24 +702,55 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
                         </button>
                       </td>
                       <td className="py-2 px-3 text-center">
-                        {emp.photoUrl ? (
-                          <img
-                            src={emp.photoUrl}
-                            alt={emp.fullName}
-                            referrerPolicy="no-referrer"
-                            className="w-8 h-10 object-cover rounded border border-slate-300 mx-auto"
-                          />
-                        ) : (
-                          <div className="w-8 h-10 rounded bg-blue-700 text-white font-bold text-[10px] flex items-center justify-center mx-auto">
-                            {emp.fullName
-                              .trim()
-                              .split(/\s+/)
-                              .slice(-2)
-                              .map((w) => w[0])
-                              .join('')
-                              .toUpperCase()}
-                          </div>
-                        )}
+                        <div className="relative inline-flex items-center justify-center group">
+                          <label
+                            className="w-10 h-13 rounded border border-slate-300 bg-white overflow-hidden flex flex-col items-center justify-center cursor-pointer hover:border-blue-600 transition-colors shadow-2xs relative"
+                            title={`Bấm để tải hoặc đổi ảnh 3×4 cho ${emp.fullName}`}
+                          >
+                            {isUploadingThis ? (
+                              <span className="text-[9px] font-bold text-blue-600 px-1">
+                                Đang lưu...
+                              </span>
+                            ) : emp.photoUrl ? (
+                              <>
+                                <img
+                                  src={emp.photoUrl}
+                                  alt={emp.fullName}
+                                  referrerPolicy="no-referrer"
+                                  className="w-full h-full object-cover"
+                                />
+                                <span className="absolute inset-0 bg-slate-900/55 text-white text-[9px] font-bold opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                  Đổi 3×4
+                                </span>
+                              </>
+                            ) : (
+                              <div className="flex flex-col items-center justify-center text-blue-700 hover:bg-blue-50 w-full h-full p-0.5">
+                                <Camera className="w-3.5 h-3.5 mb-0.5 text-blue-600" />
+                                <span className="text-[9px] font-bold leading-tight">
+                                  + 3×4
+                                </span>
+                              </div>
+                            )}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) =>
+                                handleDirectEmployeePhotoUpload(emp, e)
+                              }
+                              className="hidden"
+                            />
+                          </label>
+                          {emp.photoUrl && !isUploadingThis && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveEmployeePhoto(emp)}
+                              className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-600 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer shadow-xs"
+                              title="Xóa ảnh 3×4 của nhân viên này"
+                            >
+                              <X className="w-2.5 h-2.5" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                       <td className="py-2.5 px-4 font-mono-num font-bold text-blue-700">
                         {emp.msnv}
@@ -589,6 +775,21 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
                       </td>
                       <td className="py-2.5 px-4 text-right">
                         <div className="inline-flex items-center gap-1">
+                          <label
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-lg cursor-pointer transition-colors"
+                            title={`Chọn hình 3×4 cho ${emp.fullName}`}
+                          >
+                            <Camera className="w-3.5 h-3.5" />
+                            <span>{emp.photoUrl ? 'Đổi 3×4' : 'Ảnh 3×4'}</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) =>
+                                handleDirectEmployeePhotoUpload(emp, e)
+                              }
+                              className="hidden"
+                            />
+                          </label>
                           <button
                             type="button"
                             onClick={() => {
@@ -750,7 +951,7 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
                   <div className="flex items-center gap-2">
                     <label className="inline-flex items-center gap-1.5 px-3 py-1.5 font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 cursor-pointer">
                       <Upload className="w-3.5 h-3.5" />
-                      Chọn ảnh từ máy tính
+                      Chọn ảnh 3×4 từ máy tính
                       <input
                         type="file"
                         accept="image/*"
@@ -769,7 +970,7 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
                     )}
                   </div>
                   <div className="text-[11px] text-slate-500">
-                    Nếu chưa có ảnh, thẻ sẽ hiển thị ảnh đại diện mặc định nền xanh chuẩn 3×4.
+                    Ảnh sẽ tự động căn chuẩn tỷ lệ khung 3×4 trên thẻ nhân viên. Nếu chưa có ảnh, khung 3×4 sẽ để trống nền trắng để dán ảnh hoặc cập nhật sau.
                   </div>
                 </div>
               </div>
@@ -842,19 +1043,34 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
               </div>
             </div>
 
-            <div className="px-6 py-3.5 bg-white border-t border-slate-200 flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => {
-                  const id = previewEmployee.id;
-                  setPreviewEmployee(null);
-                  onOpenPrintDialog([id]);
-                }}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-lg cursor-pointer"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                In Thẻ Nhân Viên Này Ngay (Ctrl + P)
-              </button>
+            <div className="px-6 py-3.5 bg-white border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = previewEmployee.id;
+                    setPreviewEmployee(null);
+                    onOpenPrintDialog([id]);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-lg cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  In Thẻ Nhân Viên Này Ngay (Ctrl + P)
+                </button>
+
+                <label className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-lg cursor-pointer">
+                  <Camera className="w-3.5 h-3.5" />
+                  {previewEmployee.photoUrl ? 'Đổi Ảnh 3×4' : 'Chọn Ảnh 3×4'}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) =>
+                      handleDirectEmployeePhotoUpload(previewEmployee, e)
+                    }
+                    className="hidden"
+                  />
+                </label>
+              </div>
               <button
                 type="button"
                 onClick={() => setPreviewEmployee(null)}

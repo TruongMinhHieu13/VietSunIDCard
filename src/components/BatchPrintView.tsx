@@ -14,13 +14,68 @@ import {
   RefreshCw,
   Calendar,
   X,
+  Save,
+  Camera,
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { AppSettings, CardTemplate, Employee } from '../types';
 import { IdCardPreview } from './IdCardPreview';
 import { triggerBrowserCtrlP } from '../utils/nativePrint';
-import { parseDateToUtcTimestamp } from './EmployeeManagementView';
+import {
+  parseDateToUtcTimestamp,
+  compressImageTo3x4DataUrl,
+} from './EmployeeManagementView';
+
+const PRINT_CONFIG_STORAGE_KEY = 'vietsun_print_config_default_v2';
+
+interface SavedPrintLayoutDefaults {
+  printMethod: 'a4_sheet' | 'cr80_printer';
+  paperSize: 'A4' | 'Letter';
+  cols: number;
+  rows: number;
+  gapMm: number;
+  marginMm: number;
+  cardWidthMm: number;
+  cardHeightMm: number;
+  showCropMarks: boolean;
+  previewScale: number;
+}
+
+function loadSavedPrintDefaults(): SavedPrintLayoutDefaults {
+  try {
+    const raw = localStorage.getItem(PRINT_CONFIG_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<SavedPrintLayoutDefaults>;
+      return {
+        printMethod: parsed.printMethod === 'cr80_printer' ? 'cr80_printer' : 'a4_sheet',
+        paperSize: parsed.paperSize === 'Letter' ? 'Letter' : 'A4',
+        cols: typeof parsed.cols === 'number' ? parsed.cols : 2,
+        rows: typeof parsed.rows === 'number' ? parsed.rows : 4,
+        gapMm: typeof parsed.gapMm === 'number' ? parsed.gapMm : 0,
+        marginMm: typeof parsed.marginMm === 'number' ? parsed.marginMm : 10,
+        cardWidthMm: typeof parsed.cardWidthMm === 'number' ? parsed.cardWidthMm : 100,
+        cardHeightMm: typeof parsed.cardHeightMm === 'number' ? parsed.cardHeightMm : 50,
+        showCropMarks: typeof parsed.showCropMarks === 'boolean' ? parsed.showCropMarks : false,
+        previewScale: typeof parsed.previewScale === 'number' ? parsed.previewScale : 0.78,
+      };
+    }
+  } catch {
+    // ignore storage read error
+  }
+  return {
+    printMethod: 'a4_sheet',
+    paperSize: 'A4',
+    cols: 2,
+    rows: 4,
+    gapMm: 0,
+    marginMm: 10,
+    cardWidthMm: 100,
+    cardHeightMm: 50,
+    showCropMarks: false,
+    previewScale: 0.78,
+  };
+}
 
 interface BatchPrintViewProps {
   employees: Employee[];
@@ -30,6 +85,8 @@ interface BatchPrintViewProps {
   selectedEmployeeIds: Set<string>;
   onChangeSelectedIds: (ids: Set<string>) => void;
   settings: AppSettings;
+  onSaveSettings: (updated: AppSettings) => Promise<void>;
+  onUpdateEmployeePhoto: (emp: Employee, photoUrl: string) => Promise<void>;
   onRecordPrintJob: (
     printedEmployees: Employee[],
     printMode: 'a4_grid' | 'cr80_direct' | 'pdf_export',
@@ -54,6 +111,8 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
   selectedEmployeeIds,
   onChangeSelectedIds,
   settings,
+  onSaveSettings,
+  onUpdateEmployeePhoto,
   onRecordPrintJob,
   onOpenPrintDialog,
 }) => {
@@ -65,31 +124,109 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
   const [joinDateFrom, setJoinDateFrom] = useState('');
   const [joinDateTo, setJoinDateTo] = useState('');
 
-  // Print Layout Settings
+  const initialDefaults = useMemo(() => loadSavedPrintDefaults(), []);
+
+  // Print Layout Settings (Initialized from saved defaults)
   const [printMethod, setPrintMethod] = useState<'a4_sheet' | 'cr80_printer'>(
-    settings.defaultPaperSize === 'CR80' ? 'cr80_printer' : 'a4_sheet'
+    initialDefaults.printMethod
   );
-  const [paperSize, setPaperSize] = useState<'A4' | 'Letter'>('A4');
-  const [cols, setCols] = useState<number>(settings.defaultCols || 2);
-  const [rows, setRows] = useState<number>(settings.defaultRows || 4);
-  const [gapMm, setGapMm] = useState<number>(settings.defaultGapMm ?? 4);
-  const [marginMm, setMarginMm] = useState<number>(
-    settings.defaultMarginMm ?? 10
+  const [paperSize, setPaperSize] = useState<'A4' | 'Letter'>(
+    initialDefaults.paperSize
   );
+  const [cols, setCols] = useState<number>(initialDefaults.cols);
+  const [rows, setRows] = useState<number>(initialDefaults.rows);
+  const [gapMm, setGapMm] = useState<number>(initialDefaults.gapMm);
+  const [marginMm, setMarginMm] = useState<number>(initialDefaults.marginMm);
   const [cardWidthMm, setCardWidthMm] = useState<number>(
-    settings.cardWidthMm || 85.6
+    initialDefaults.cardWidthMm
   );
   const [cardHeightMm, setCardHeightMm] = useState<number>(
-    settings.cardHeightMm || 54
+    initialDefaults.cardHeightMm
   );
-  const [showCropMarks, setShowCropMarks] = useState<boolean>(true);
-  const [previewScale, setPreviewScale] = useState<number>(0.78);
+  const [showCropMarks, setShowCropMarks] = useState<boolean>(
+    initialDefaults.showCropMarks
+  );
+  const [previewScale, setPreviewScale] = useState<number>(
+    initialDefaults.previewScale
+  );
 
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isSavingDefault, setIsSavingDefault] = useState(false);
+  const [savedDefaultToast, setSavedDefaultToast] = useState(false);
   const [statusBanner, setStatusBanner] = useState<string | null>(null);
+  const [uploadingPhotoEmpId, setUploadingPhotoEmpId] = useState<string | null>(
+    null
+  );
 
   const sheetRefs = useRef<Array<HTMLDivElement | null>>([]);
   const hasAutoSelectedRef = useRef(false);
+
+  // Auto-persist print layout configuration to localStorage whenever any value changes
+  useEffect(() => {
+    try {
+      const payload: SavedPrintLayoutDefaults = {
+        printMethod,
+        paperSize,
+        cols,
+        rows,
+        gapMm,
+        marginMm,
+        cardWidthMm,
+        cardHeightMm,
+        showCropMarks,
+        previewScale,
+      };
+      localStorage.setItem(PRINT_CONFIG_STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // ignore storage write error
+    }
+  }, [
+    printMethod,
+    paperSize,
+    cols,
+    rows,
+    gapMm,
+    marginMm,
+    cardWidthMm,
+    cardHeightMm,
+    showCropMarks,
+    previewScale,
+  ]);
+
+  const handleSaveAsDefaultConfig = async () => {
+    setIsSavingDefault(true);
+    try {
+      const payload: SavedPrintLayoutDefaults = {
+        printMethod,
+        paperSize,
+        cols,
+        rows,
+        gapMm,
+        marginMm,
+        cardWidthMm,
+        cardHeightMm,
+        showCropMarks,
+        previewScale,
+      };
+      localStorage.setItem(PRINT_CONFIG_STORAGE_KEY, JSON.stringify(payload));
+
+      await onSaveSettings({
+        ...settings,
+        defaultPaperSize: printMethod === 'cr80_printer' ? 'CR80' : paperSize,
+        defaultCols: cols,
+        defaultRows: rows,
+        defaultGapMm: gapMm,
+        defaultMarginMm: marginMm,
+        cardWidthMm,
+        cardHeightMm,
+      });
+
+      setSavedDefaultToast(true);
+      setTimeout(() => setSavedDefaultToast(false), 3000);
+    } finally {
+      setIsSavingDefault(false);
+    }
+  };
 
   // Auto-select all employees on first open if none are currently selected
   useEffect(() => {
@@ -550,6 +687,7 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
             ) : (
               filteredEmployees.map((emp) => {
                 const isSelected = selectedEmployeeIds.has(emp.id);
+                const isUploadingThis = uploadingPhotoEmpId === emp.id;
                 return (
                   <div
                     key={emp.id}
@@ -560,7 +698,7 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
                         : 'hover:bg-slate-50'
                     }`}
                   >
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-center gap-2.5 min-w-0">
                       <button
                         type="button"
                         className="text-blue-600 shrink-0"
@@ -575,6 +713,56 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
                           <Square className="w-4 h-4 text-slate-400" />
                         )}
                       </button>
+
+                      {/* Clickable 3x4 Photo Thumbnail */}
+                      <div
+                        className="relative shrink-0 group"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <label
+                          className="w-8 h-10 rounded border border-slate-300 bg-white overflow-hidden flex flex-col items-center justify-center cursor-pointer hover:border-blue-600 transition-colors"
+                          title={`Bấm để chọn hoặc đổi hình 3×4 cho ${emp.fullName}`}
+                        >
+                          {isUploadingThis ? (
+                            <span className="text-[8px] font-bold text-blue-600">
+                              ...
+                            </span>
+                          ) : emp.photoUrl ? (
+                            <img
+                              src={emp.photoUrl}
+                              alt={emp.fullName}
+                              referrerPolicy="no-referrer"
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex flex-col items-center justify-center text-blue-600">
+                              <Camera className="w-3 h-3" />
+                              <span className="text-[8px] font-bold leading-none mt-0.5">
+                                3×4
+                              </span>
+                            </div>
+                          )}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              setUploadingPhotoEmpId(emp.id);
+                              try {
+                                const compressed =
+                                  await compressImageTo3x4DataUrl(file);
+                                await onUpdateEmployeePhoto(emp, compressed);
+                              } finally {
+                                setUploadingPhotoEmpId(null);
+                                e.target.value = '';
+                              }
+                            }}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+
                       <div className="min-w-0">
                         <div className="font-bold text-slate-900 truncate">
                           {emp.fullName}
@@ -589,16 +777,33 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="font-mono-num text-[11px]">
-                        {emp.printCount > 0 ? (
-                          <span className="text-emerald-700 font-medium">
-                            Đã in {emp.printCount}l
-                          </span>
-                        ) : (
-                          <span className="text-amber-600">Chưa in</span>
-                        )}
-                      </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <label
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-blue-700 bg-white border border-blue-200 hover:bg-blue-50 rounded cursor-pointer"
+                        title={`Tải hình 3×4 cho ${emp.fullName}`}
+                      >
+                        <Camera className="w-3 h-3" />
+                        <span>{emp.photoUrl ? 'Đổi 3×4' : 'Ảnh 3×4'}</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            setUploadingPhotoEmpId(emp.id);
+                            try {
+                              const compressed =
+                                await compressImageTo3x4DataUrl(file);
+                              await onUpdateEmployeePhoto(emp, compressed);
+                            } finally {
+                              setUploadingPhotoEmpId(null);
+                              e.target.value = '';
+                            }
+                          }}
+                          className="hidden"
+                        />
+                      </label>
                       <button
                         type="button"
                         onClick={(e) => {
@@ -656,7 +861,7 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
                 2. Cấu Hình Phương Thức In & Dàn Trang
               </div>
 
-              <div className="flex items-center gap-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
                 <span className="text-slate-500">Mẫu thiết kế:</span>
                 <select
                   value={selectedTemplate.id}
@@ -674,6 +879,26 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
                     </option>
                   ))}
                 </select>
+
+                <button
+                  type="button"
+                  disabled={isSavingDefault}
+                  onClick={handleSaveAsDefaultConfig}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg cursor-pointer transition-colors shadow-xs disabled:opacity-50"
+                  title="Lưu toàn bộ thông số kích thước, số cột/hàng, lề giấy hiện tại làm mặc định"
+                >
+                  {savedDefaultToast ? (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Đã lưu mặc định!
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-3.5 h-3.5" />
+                      Lưu thông tin mặc định
+                    </>
+                  )}
+                </button>
               </div>
             </div>
 
@@ -733,7 +958,7 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
                     step="0.1"
                     value={cardWidthMm}
                     onChange={(e) =>
-                      setCardWidthMm(Number(e.target.value) || 85.6)
+                      setCardWidthMm(Number(e.target.value) || 0)
                     }
                     className="w-full px-2 py-1.5 border border-slate-300 rounded-lg font-mono-num"
                   />
@@ -743,7 +968,7 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
                     step="0.1"
                     value={cardHeightMm}
                     onChange={(e) =>
-                      setCardHeightMm(Number(e.target.value) || 54)
+                      setCardHeightMm(Number(e.target.value) || 0)
                     }
                     className="w-full px-2 py-1.5 border border-slate-300 rounded-lg font-mono-num"
                   />

@@ -415,7 +415,7 @@ export default function App() {
               fullName: row.fullName.slice(0, 120),
               department: row.department.slice(0, 120),
               joinDate: row.joinDate.slice(0, 30),
-              photoUrl: existing?.photoUrl || '',
+              photoUrl: (row.photoUrl || existing?.photoUrl || '').slice(0, 500000),
               printCount: existing?.printCount || 0,
               lastPrintedAt: existing?.lastPrintedAt || '',
               ownerId: WORKSPACE_ID,
@@ -440,20 +440,24 @@ export default function App() {
 
         slice.forEach((row) => {
           if (row.status === 'valid_update' && row.existingEmployeeId) {
-            batch.update(doc(db, 'employees', row.resolvedId), {
+            const updatePayload: Record<string, unknown> = {
               msnv: row.msnv.slice(0, 50),
               fullName: row.fullName.slice(0, 120),
               department: row.department.slice(0, 120),
               joinDate: row.joinDate.slice(0, 30),
               updatedAt: serverTimestamp(),
-            });
+            };
+            if (row.photoUrl) {
+              updatePayload.photoUrl = row.photoUrl.slice(0, 500000);
+            }
+            batch.update(doc(db, 'employees', row.resolvedId), updatePayload);
           } else if (row.status === 'valid_new') {
             batch.set(doc(db, 'employees', row.resolvedId), {
               msnv: row.msnv.slice(0, 50),
               fullName: row.fullName.slice(0, 120),
               department: row.department.slice(0, 120),
               joinDate: row.joinDate.slice(0, 30),
-              photoUrl: '',
+              photoUrl: (row.photoUrl || '').slice(0, 500000),
               printCount: 0,
               lastPrintedAt: '',
               ownerId: WORKSPACE_ID,
@@ -612,23 +616,32 @@ export default function App() {
 
   // Save System Settings
   const handleSaveSettings = async (updated: AppSettings) => {
+    const docId =
+      updated.id && updated.id !== 'default-settings'
+        ? updated.id
+        : 'settings_vietsun_main';
     try {
-      await updateDoc(doc(db, 'settings', updated.id), {
-        companyName: updated.companyName.slice(0, 150),
-        companyBranch: updated.companyBranch.slice(0, 150),
-        companySubName: updated.companySubName.slice(0, 150),
-        logoUrl: (updated.logoUrl || OFFICIAL_VIETSUN_LOGO).slice(0, 300000),
-        defaultPaperSize: updated.defaultPaperSize,
-        defaultCols: Number(updated.defaultCols),
-        defaultRows: Number(updated.defaultRows),
-        defaultGapMm: Number(updated.defaultGapMm),
-        defaultMarginMm: Number(updated.defaultMarginMm),
-        cardWidthMm: Number(updated.cardWidthMm),
-        cardHeightMm: Number(updated.cardHeightMm),
-        updatedAt: serverTimestamp(),
-      });
+      await setDoc(
+        doc(db, 'settings', docId),
+        {
+          companyName: updated.companyName.slice(0, 150),
+          companyBranch: updated.companyBranch.slice(0, 150),
+          companySubName: updated.companySubName.slice(0, 150),
+          logoUrl: (updated.logoUrl || OFFICIAL_VIETSUN_LOGO).slice(0, 300000),
+          defaultPaperSize: updated.defaultPaperSize,
+          defaultCols: Number(updated.defaultCols),
+          defaultRows: Number(updated.defaultRows),
+          defaultGapMm: Number(updated.defaultGapMm),
+          defaultMarginMm: Number(updated.defaultMarginMm),
+          cardWidthMm: Number(updated.cardWidthMm),
+          cardHeightMm: Number(updated.cardHeightMm),
+          ownerId: WORKSPACE_ID,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `settings/${updated.id}`);
+      handleFirestoreError(err, OperationType.UPDATE, `settings/${docId}`);
     }
   };
 
@@ -641,7 +654,7 @@ export default function App() {
     };
 
   const activeSettings: AppSettings = settings || {
-    id: 'default-settings',
+    id: 'settings_vietsun_main',
     companyName: 'CHI NHÁNH CÔNG TY CỔ PHẦN',
     companyBranch: 'VIETSUN ĐỒNG NAI',
     companySubName: 'ĐẦU TƯ MẶT TRỜI VIỆT',
@@ -649,10 +662,10 @@ export default function App() {
     defaultPaperSize: 'A4',
     defaultCols: 2,
     defaultRows: 4,
-    defaultGapMm: 4,
+    defaultGapMm: 0,
     defaultMarginMm: 10,
-    cardWidthMm: 85.6,
-    cardHeightMm: 54,
+    cardWidthMm: 100,
+    cardHeightMm: 50,
     ownerId: WORKSPACE_ID,
   };
 
@@ -842,6 +855,16 @@ export default function App() {
             selectedEmployeeIds={selectedEmployeeIds}
             onChangeSelectedIds={setSelectedEmployeeIds}
             settings={activeSettings}
+            onSaveSettings={handleSaveSettings}
+            onUpdateEmployeePhoto={(emp, photoUrl) =>
+              handleUpdateEmployee(emp.id, {
+                msnv: emp.msnv,
+                fullName: emp.fullName,
+                department: emp.department,
+                joinDate: emp.joinDate,
+                photoUrl,
+              })
+            }
             onRecordPrintJob={handleRecordPrintJob}
             onOpenPrintDialog={handleOpenPrintDialog}
           />

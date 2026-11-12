@@ -11,8 +11,10 @@ import {
   CheckSquare,
   Square,
   Printer,
+  Camera,
 } from 'lucide-react';
 import { Employee } from '../types';
+import { compressImageTo3x4DataUrl } from './EmployeeManagementView';
 
 export interface ParsedExcelRow {
   rowNumber: number;
@@ -20,6 +22,7 @@ export interface ParsedExcelRow {
   fullName: string;
   department: string;
   joinDate: string;
+  photoUrl?: string;
   status: 'valid_new' | 'valid_update' | 'error';
   errors: string[];
   existingEmployeeId?: string;
@@ -166,6 +169,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       joinDate: string;
     }>
   >([]);
+  const [rowPhotos, setRowPhotos] = useState<Record<number, string>>({});
   const [importMode, setImportMode] = useState<'add_only' | 'upsert'>('add_only');
   const [deselectedRowNums, setDeselectedRowNums] = useState<Set<number>>(new Set());
   const [filterView, setFilterView] = useState<'all' | 'valid' | 'error'>('all');
@@ -235,13 +239,14 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         fullName: nameClean,
         department: deptClean,
         joinDate: dateClean,
+        photoUrl: rowPhotos[row.rowNumber] || existingEmp?.photoUrl || '',
         status,
         errors,
         existingEmployeeId: existingEmp?.id,
         selected: !isError && !deselectedRowNums.has(row.rowNumber),
       };
     });
-  }, [rawRows, importMode, existingMap, deselectedRowNums]);
+  }, [rawRows, importMode, existingMap, deselectedRowNums, rowPhotos]);
 
   const stats = useMemo(() => {
     const totalRows = evaluatedRows.length;
@@ -399,6 +404,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   const handleReset = () => {
     setFileName('');
     setRawRows([]);
+    setRowPhotos({});
     setDeselectedRowNums(new Set());
     setImportResultBanner(null);
     setParseError(null);
@@ -650,6 +656,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                     <tr>
                       <th className="py-2.5 px-3 w-10 text-center">Chọn</th>
                       <th className="py-2.5 px-3 w-16 font-mono-num">Dòng Excel</th>
+                      <th className="py-2.5 px-3 w-20 text-center">Ảnh 3×4</th>
                       <th className="py-2.5 px-3 w-28">MSNV</th>
                       <th className="py-2.5 px-3">Họ và tên</th>
                       <th className="py-2.5 px-3">Bộ phận</th>
@@ -693,6 +700,49 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                           </td>
                           <td className="py-2 px-3 font-mono-num text-slate-500">
                             #{row.rowNumber}
+                          </td>
+                          <td className="py-1.5 px-3 text-center">
+                            {!isError && (
+                              <label
+                                className="w-8 h-10 rounded border border-slate-300 bg-white overflow-hidden inline-flex flex-col items-center justify-center cursor-pointer hover:border-blue-600"
+                                title="Bấm để chọn ảnh 3×4 cho dòng này"
+                              >
+                                {row.photoUrl ? (
+                                  <img
+                                    src={row.photoUrl}
+                                    alt={row.fullName}
+                                    referrerPolicy="no-referrer"
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <div className="flex flex-col items-center justify-center text-blue-600">
+                                    <Camera className="w-3 h-3" />
+                                    <span className="text-[8px] font-bold leading-none mt-0.5">
+                                      3×4
+                                    </span>
+                                  </div>
+                                )}
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    try {
+                                      const compressed =
+                                        await compressImageTo3x4DataUrl(file);
+                                      setRowPhotos((prev) => ({
+                                        ...prev,
+                                        [row.rowNumber]: compressed,
+                                      }));
+                                    } finally {
+                                      e.target.value = '';
+                                    }
+                                  }}
+                                  className="hidden"
+                                />
+                              </label>
+                            )}
                           </td>
                           <td className="py-2 px-3 font-mono-num font-semibold text-slate-900">
                             {row.msnv || <span className="text-red-500 italic">(Trống)</span>}
