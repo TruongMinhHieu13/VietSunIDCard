@@ -93,7 +93,7 @@ interface EmployeeManagementViewProps {
     department: string;
     joinDate: string;
     photoUrl: string;
-  }) => Promise<void>;
+  }) => Promise<string | void>;
   onUpdateEmployee: (
     id: string,
     data: {

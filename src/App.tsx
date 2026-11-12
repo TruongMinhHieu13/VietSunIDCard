@@ -303,15 +303,35 @@ export default function App() {
     department: string;
     joinDate: string;
     photoUrl: string;
-  }) => {
+  }): Promise<string> => {
     const id = generateSafeId('emp');
+    const newEmp: Employee = {
+      id,
+      msnv: data.msnv.slice(0, 50),
+      fullName: data.fullName.slice(0, 120),
+      department: data.department.slice(0, 120),
+      joinDate: data.joinDate.slice(0, 30),
+      photoUrl: data.photoUrl.slice(0, 500000),
+      printCount: 0,
+      lastPrintedAt: '',
+      ownerId: WORKSPACE_ID,
+    };
+    flushSync(() => {
+      setEmployees((prev) => {
+        const next = [...prev, newEmp];
+        next.sort((a, b) =>
+          a.msnv.localeCompare(b.msnv, undefined, { numeric: true })
+        );
+        return next;
+      });
+    });
     try {
       await setDoc(doc(db, 'employees', id), {
-        msnv: data.msnv.slice(0, 50),
-        fullName: data.fullName.slice(0, 120),
-        department: data.department.slice(0, 120),
-        joinDate: data.joinDate.slice(0, 30),
-        photoUrl: data.photoUrl.slice(0, 500000),
+        msnv: newEmp.msnv,
+        fullName: newEmp.fullName,
+        department: newEmp.department,
+        joinDate: newEmp.joinDate,
+        photoUrl: newEmp.photoUrl,
         printCount: 0,
         lastPrintedAt: '',
         ownerId: WORKSPACE_ID,
@@ -321,6 +341,7 @@ export default function App() {
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `employees/${id}`);
     }
+    return id;
   };
 
   const handleUpdateEmployee = async (
@@ -856,6 +877,7 @@ export default function App() {
             onChangeSelectedIds={setSelectedEmployeeIds}
             settings={activeSettings}
             onSaveSettings={handleSaveSettings}
+            onAddEmployee={handleAddEmployee}
             onUpdateEmployeePhoto={(emp, photoUrl) =>
               handleUpdateEmployee(emp.id, {
                 msnv: emp.msnv,
