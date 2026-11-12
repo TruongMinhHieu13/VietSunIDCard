@@ -691,7 +691,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col">
+    <div className="min-h-screen bg-slate-100 print:bg-white print:min-h-0 flex flex-col print:block">
       {/* Top Navigation Bar (Hidden when printing) */}
       <header className="no-print bg-white text-slate-900 border-b border-slate-200 sticky top-0 z-30 shadow-xs">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-6">
@@ -818,7 +818,7 @@ export default function App() {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 py-6">
+      <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 py-6 print:p-0 print:m-0 print:max-w-none">
         {activeTab === 'dashboard' && (
           <DashboardView
             employees={employees}

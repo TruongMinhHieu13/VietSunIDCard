@@ -575,7 +575,7 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
         : 279.4;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 print:space-y-0 print:m-0 print:p-0 print:bg-white">
       {/* Top Action & Status Bar (Hidden during print) */}
       <div className="no-print bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -1529,16 +1529,20 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
       </div>
 
       {/* Dedicated 1:1 Physical Print Root (Visible ONLY during window.print() / Ctrl+P) */}
-      <div id="printable-cards-root">
+      <div
+        id="printable-cards-root"
+        className="print:m-0 print:p-0 print:bg-white print:border-0 print:shadow-none"
+      >
         {pages.map((page) => (
           <div
             key={`print-page-${page.pageNumber}`}
-            className="print-sheet bg-white box-border"
+            className="print-sheet bg-white box-border print:m-0 print:border-0 print:shadow-none"
             style={{
               width: `${sheetWidthMm}mm`,
               height: `${sheetHeightMm}mm`,
               padding:
                 printMethod === 'cr80_printer' ? '0mm' : `${marginMm}mm`,
+              backgroundColor: '#ffffff',
             }}
           >
             {printMethod === 'cr80_printer' ? (
