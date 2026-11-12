@@ -208,8 +208,14 @@ export const IdCardPreview: React.FC<IdCardPreviewProps> = ({
                         transform: `translateY(${template.deptOffsetY || 0}px)`,
                       }}
                     >
-                      {template.deptPrefix ?? 'BP. '}
-                      {employee.department}
+                      {(() => {
+                        const dept = (employee.department || '').trim();
+                        const pfx = template.deptPrefix ?? 'BP. ';
+                        if (!pfx.trim() || /^bp\.?\s+/i.test(dept) || dept.toLowerCase().startsWith(pfx.trim().toLowerCase())) {
+                          return dept;
+                        }
+                        return `${pfx}${dept}`;
+                      })()}
                     </span>
                   </div>
 

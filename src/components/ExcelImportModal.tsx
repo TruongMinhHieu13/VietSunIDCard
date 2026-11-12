@@ -19,8 +19,11 @@ import { compressImageTo3x4DataUrl } from './EmployeeManagementView';
 export interface ParsedExcelRow {
   rowNumber: number;
   msnv: string;
+  lastName?: string;
+  firstName?: string;
   fullName: string;
   department: string;
+  jobTitle?: string;
   joinDate: string;
   photoUrl?: string;
   status: 'valid_new' | 'valid_update' | 'error';
@@ -78,45 +81,78 @@ function formatExcelDate(val: unknown): string {
 }
 
 export function downloadSampleExcelTemplate() {
-  const sampleData = [
-    {
-      MSNV: '90993',
-      'Họ và tên': 'TRƯƠNG MINH HIẾU',
-      'Bộ phận': 'Bảo trì vận hành',
-      'Ngày vào làm': '02/10/2026',
-    },
-    {
-      MSNV: '91001',
-      'Họ và tên': 'LÊ THỊ HỒNG NHUNG',
-      'Bộ phận': 'Kế toán - Tài chính',
-      'Ngày vào làm': '15/10/2026',
-    },
-    {
-      MSNV: '91002',
-      'Họ và tên': 'PHẠM VĂN ĐỨC',
-      'Bộ phận': 'Sản xuất - Kỹ thuật',
-      'Ngày vào làm': '20/10/2026',
-    },
-    {
-      MSNV: '91003',
-      'Họ và tên': 'NGUYỄN MINH QUÂN',
-      'Bộ phận': 'Bảo trì vận hành',
-      'Ngày vào làm': '01/11/2026',
-    },
-    {
-      MSNV: '91004',
-      'Họ và tên': 'ĐẶNG THỊ MAI LAN',
-      'Bộ phận': 'Hành chính - Nhân sự',
-      'Ngày vào làm': '05/11/2026',
-    },
+  // Exact 12-column (A -> L) structure matching VietSun HR file (Columns G -> L used for ID cards)
+  const aoa: unknown[][] = [
+    [
+      'VIETSUN',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      'DANH SÁCH CÁN BỘ CÔNG NHÂN VIÊN',
+      '',
+      '',
+    ],
+    [
+      'STT',
+      'ĐƠN VỊ',
+      'Tình trạng',
+      'KHỐI',
+      'KÝ HIỆU PB',
+      'PHÒNG BAN',
+      'PHÒNG BAN CON',
+      'MSNV',
+      'HỌ',
+      'TÊN',
+      'CÔNG VIỆC',
+      'NGÀY VÀO',
+    ],
+    [
+      'No',
+      'Donvi',
+      'Tinhtrang',
+      '',
+      'Tinhtrang',
+      'Bophan5',
+      'Bophancon6',
+      'Manhanvien',
+      'Ho',
+      'Ten',
+      'Congviec',
+      'Ngayvaocty',
+    ],
+    [1, 'XMAY 03', 'LV', 'GTSX', 'P8', 'Tổ Kỹ thuật triển khai', 'Tổ Triển khai sản xuất', '00441', 'Dương Minh', 'Tuấn', 'Nhân viên Kỹ thuật triển khai', '15/08/2025'],
+    [2, 'XMAY 03', 'LV', 'TTSX', 'P14', 'Tổ Cơ động', 'Tổ Cơ động', '91051', 'Lâm Thị Thu', 'Thuỷ', 'Công nhân vận hành máy may công nghiệp', '02/11/2026'],
+    [3, 'XMAY 03', 'LV', 'GTSX', 'P7', 'Phòng quản lý chất lượng', 'Tổ QC', '91052', 'Nguyễn Thị Hồng', 'Linh', 'Công nhân QC ENDLINE', '02/11/2026'],
+    [4, 'XMAY 03', 'LV', 'TTSX', 'P15', 'Chuyền may', 'Chuyền may 01-02', '91053', 'Phạm Thị Bích', 'Hoa', 'Công nhân vận hành máy may công nghiệp', '02/11/2026'],
+    [5, 'XMAY 03', 'LV', 'TTSX', 'P15', 'Chuyền may', 'Chuyền may 11-02', '91054', 'Thị', 'Minh', 'Công nhân vận hành máy may công nghiệp', '04/11/2026'],
+    [6, 'XMAY 03', 'LV', 'GTSX', 'P16', 'Tổ Hoàn Thành', 'Nhóm hoàn thành', '91055', 'Nguyễn Văn', 'Hải', 'Công nhân đóng thùng', '04/11/2026'],
+    [7, 'XMAY 03', 'LV', 'TTSX', 'P15', 'Chuyền may', 'Chuyền may 04-02', '91056', 'Nguyễn Minh', 'Trí', 'Công nhân ủi', '04/11/2026'],
+    [8, 'XMAY 03', 'LV', 'GTSX', 'P16', 'Tổ Hoàn Thành', 'Nhóm gấp xếp', '91058', 'Trần Thị Hồng', 'Thắm', 'Công nhân gấp xếp', '11/07/2026'],
+    [9, 'XMAY 03', 'LV', 'TTSX', 'P15', 'Chuyền may', 'Chuyền may 12-02', '91059', 'Nguyễn Thị Ánh', 'Hội', 'Công nhân vận hành máy may công nghiệp', '09/11/2026'],
+    [10, 'XMAY 03', 'LV', 'TTSX', 'P15', 'Chuyền may', 'Chuyền may 12-02', '91060', 'Trương Thị Phương', 'Thảo', 'Công nhân vận hành máy may công nghiệp', '10/11/2026'],
+    [11, 'XMAY 03', 'LV', 'Văn phòng', 'P6', 'Phòng Bảo trì vận hành', 'BP. Bảo trì vận hành', '91061', 'Phạm Văn', 'Việt', 'Nhân viên bảo trì vận hành', '10/11/2026'],
+    [12, 'XMAY 03', 'LV', 'TTSX', 'P14', 'Tổ Cơ động', 'Tổ Cơ động', '91062', 'Lê Hồng', 'Nhung', 'Công nhân vận hành máy may công nghiệp', '12/11/2026'],
   ];
 
-  const worksheet = XLSX.utils.json_to_sheet(sampleData);
+  const worksheet = XLSX.utils.aoa_to_sheet(aoa);
   worksheet['!cols'] = [
-    { wch: 15 },
-    { wch: 28 },
-    { wch: 26 },
-    { wch: 18 },
+    { wch: 6 },  // A: STT
+    { wch: 11 }, // B: ĐƠN VỊ
+    { wch: 10 }, // C: Tình trạng
+    { wch: 10 }, // D: KHỐI
+    { wch: 12 }, // E: KÝ HIỆU PB
+    { wch: 24 }, // F: PHÒNG BAN
+    { wch: 24 }, // G: PHÒNG BAN CON
+    { wch: 12 }, // H: MSNV
+    { wch: 20 }, // I: HỌ
+    { wch: 10 }, // J: TÊN
+    { wch: 36 }, // K: CÔNG VIỆC
+    { wch: 14 }, // L: NGÀY VÀO
   ];
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'DanhSachNhanVien');
@@ -124,25 +160,40 @@ export function downloadSampleExcelTemplate() {
 }
 
 export function exportEmployeesToExcel(employees: Employee[]) {
-  const rows = employees.map((emp, idx) => ({
-    STT: idx + 1,
-    MSNV: emp.msnv,
-    'Họ và tên': emp.fullName,
-    'Bộ phận': emp.department,
-    'Ngày vào làm': emp.joinDate,
-    'Số lần in thẻ': emp.printCount || 0,
-    'Lần in gần nhất': emp.lastPrintedAt || 'Chưa in',
-  }));
+  const rows = employees.map((emp, idx) => {
+    const parts = emp.fullName.trim().split(/\s+/);
+    const ten = parts.length > 1 ? parts[parts.length - 1] : emp.fullName;
+    const ho = parts.length > 1 ? parts.slice(0, -1).join(' ') : '';
+    return {
+      STT: idx + 1,
+      'ĐƠN VỊ': 'XMAY 03',
+      'Tình trạng': 'LV',
+      KHỐI: '',
+      'KÝ HIỆU PB': '',
+      'PHÒNG BAN': emp.department,
+      'PHÒNG BAN CON': emp.department,
+      MSNV: emp.msnv,
+      HỌ: ho,
+      TÊN: ten,
+      'CÔNG VIỆC': '',
+      'NGÀY VÀO': emp.joinDate,
+    };
+  });
 
   const worksheet = XLSX.utils.json_to_sheet(rows);
   worksheet['!cols'] = [
-    { wch: 8 },
-    { wch: 15 },
-    { wch: 28 },
-    { wch: 26 },
-    { wch: 16 },
-    { wch: 15 },
-    { wch: 18 },
+    { wch: 6 },
+    { wch: 11 },
+    { wch: 10 },
+    { wch: 10 },
+    { wch: 12 },
+    { wch: 24 },
+    { wch: 24 },
+    { wch: 12 },
+    { wch: 20 },
+    { wch: 10 },
+    { wch: 30 },
+    { wch: 14 },
   ];
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'DanhSachNhanVien');
@@ -164,8 +215,11 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     Array<{
       rowNumber: number;
       msnv: string;
+      lastName: string;
+      firstName: string;
       fullName: string;
       department: string;
+      jobTitle: string;
       joinDate: string;
     }>
   >([]);
@@ -201,14 +255,14 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       const deptClean = row.department.trim();
       const dateClean = row.joinDate.trim();
 
-      if (!msnvClean) errors.push('Thiếu Mã số nhân viên (MSNV)');
-      if (!nameClean) errors.push('Thiếu Họ và tên');
-      if (!deptClean) errors.push('Thiếu Bộ phận');
-      if (!dateClean) errors.push('Thiếu Ngày vào làm');
+      if (!msnvClean) errors.push('Thiếu MSNV (Cột H)');
+      if (!nameClean) errors.push('Thiếu Họ / Tên (Cột I, J)');
+      if (!deptClean) errors.push('Thiếu Phòng ban con (Cột G)');
+      if (!dateClean) errors.push('Thiếu Ngày vào (Cột L)');
 
       if (msnvClean.length > 50) errors.push('MSNV vượt quá 50 ký tự');
       if (nameClean.length > 120) errors.push('Họ và tên vượt quá 120 ký tự');
-      if (deptClean.length > 120) errors.push('Bộ phận vượt quá 120 ký tự');
+      if (deptClean.length > 120) errors.push('Phòng ban con vượt quá 120 ký tự');
 
       const msnvKey = msnvClean.toLowerCase();
       if (msnvKey) {
@@ -236,8 +290,11 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       return {
         rowNumber: row.rowNumber,
         msnv: msnvClean,
+        lastName: row.lastName,
+        firstName: row.firstName,
         fullName: nameClean,
         department: deptClean,
+        jobTitle: row.jobTitle,
         joinDate: dateClean,
         photoUrl: rowPhotos[row.rowNumber] || existingEmp?.photoUrl || '',
         status,
@@ -291,43 +348,228 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     reader.onload = (evt) => {
       try {
         const data = evt.target?.result;
-        const workbook = XLSX.read(data, { type: 'binary' });
+        const workbook = XLSX.read(data, { type: 'array' });
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
-        const jsonRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
+
+        // Read both raw values (for accurate Excel date serials) and formatted strings (for leading-zero MSNV like 00441)
+        const rawMatrix = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
+          header: 1,
           defval: '',
+          raw: true,
+        });
+        const fmtMatrix = XLSX.utils.sheet_to_json<string[]>(worksheet, {
+          header: 1,
+          defval: '',
+          raw: false,
         });
 
-        if (jsonRows.length === 0) {
+        if (rawMatrix.length === 0) {
           setParseError('File Excel không có dữ liệu hoặc để trống.');
           setRawRows([]);
           return;
         }
 
-        const extracted = jsonRows.map((record, idx) => {
-          // Flexible header matching
-          const keys = Object.keys(record);
-          const findVal = (patterns: string[]) => {
-            const matchedKey = keys.find((k) => {
-              const norm = k.trim().toLowerCase();
-              return patterns.some((p) => norm.includes(p));
-            });
-            return matchedKey ? record[matchedKey] : '';
+        const norm = (v: unknown) =>
+          String(v ?? '')
+            .trim()
+            .toLowerCase()
+            .replace(/\s+/g, ' ');
+
+        // Default column mapping: VietSun HR Sheet Columns G -> L (indices 6 -> 11)
+        let colDept = 6;   // Cột G: PHÒNG BAN CON (Bophancon6)
+        let colMsnv = 7;   // Cột H: MSNV (Manhanvien)
+        let colHo = 8;     // Cột I: HỌ (Ho)
+        let colTen = 9;    // Cột J: TÊN (Ten)
+        let colFullName = -1;
+        let colJob = 10;   // Cột K: CÔNG VIỆC (Congviec)
+        let colDate = 11;  // Cột L: NGÀY VÀO (Ngayvaocty)
+        let dataStartRow = 0;
+
+        // Detect header row within first 20 rows
+        let headerRowIdx = -1;
+        for (let r = 0; r < Math.min(20, fmtMatrix.length); r++) {
+          const rowCells = (fmtMatrix[r] || []).map(norm);
+          const hasMsnv = rowCells.some(
+            (c) =>
+              c === 'msnv' ||
+              c.startsWith('manh') ||
+              c.includes('mã số') ||
+              c.includes('ma so')
+          );
+          const hasDeptOrName = rowCells.some(
+            (c) =>
+              c.includes('phòng ban') ||
+              c.includes('phong ban') ||
+              c.includes('bophan') ||
+              c.includes('bộ phận') ||
+              c === 'họ' ||
+              c === 'ho' ||
+              c.includes('họ và tên')
+          );
+          if (hasMsnv && hasDeptOrName) {
+            headerRowIdx = r;
+            break;
+          }
+        }
+
+        if (headerRowIdx !== -1) {
+          const hRow = (fmtMatrix[headerRowIdx] || []).map(norm);
+          const nextRow = (fmtMatrix[headerRowIdx + 1] || []).map(norm);
+
+          // Check if headerRowIdx + 1 is the English/filter sub-header row (No | Donvi | ... | Bophancon6 | Manhanvien | Ho | Ten | Congviec | Ngayvaocty)
+          const isNextRowSubHeader = nextRow.some(
+            (c) =>
+              c.includes('bophan') ||
+              c.startsWith('manh') ||
+              c.includes('ngayvao') ||
+              c === 'congviec' ||
+              c === 'donvi' ||
+              c === 'tinhtrang'
+          );
+
+          dataStartRow = isNextRowSubHeader ? headerRowIdx + 2 : headerRowIdx + 1;
+
+          // If the sheet has at least 12 columns (A -> L) and Col H (7) is MSNV/Manh, use exact Columns G -> L (6 -> 11)
+          const isStandardGtoL =
+            (hRow.length >= 12 || nextRow.length >= 12) &&
+            (hRow[7]?.includes('msnv') ||
+              nextRow[7]?.startsWith('manh') ||
+              hRow[6]?.includes('phòng ban con') ||
+              nextRow[6]?.includes('bophancon'));
+
+          if (!isStandardGtoL) {
+            // Dynamic column lookup for sheets where G->L were copied into A->F or 4-column templates
+            const findCol = (predicate: (cell: string) => boolean): number => {
+              const idx1 = hRow.findIndex(predicate);
+              if (idx1 !== -1) return idx1;
+              if (isNextRowSubHeader) {
+                return nextRow.findIndex(predicate);
+              }
+              return -1;
+            };
+
+            const foundDeptSub = findCol(
+              (c) => c.includes('phòng ban con') || c.includes('phong ban con') || c.includes('bophancon')
+            );
+            const foundDeptAny = findCol(
+              (c) => c.includes('bộ phận') || c.includes('bo phan') || c.includes('phòng ban') || c.includes('bophan')
+            );
+            const foundMsnv = findCol(
+              (c) => c === 'msnv' || c.startsWith('manh') || c.includes('mã số') || c.includes('ma nv')
+            );
+            const foundHo = findCol((c) => c === 'họ' || c === 'ho' || c === 'họ đệm');
+            const foundTen = findCol((c) => c === 'tên' || c === 'ten');
+            const foundFullName = findCol(
+              (c) => c.includes('họ và tên') || c.includes('ho va ten') || c.includes('họ tên')
+            );
+            const foundJob = findCol(
+              (c) => c.includes('công việc') || c.includes('cong viec') || c.includes('congviec')
+            );
+            const foundDate = findCol(
+              (c) => c.includes('ngày vào') || c.includes('ngay vao') || c.includes('ngayvao')
+            );
+
+            if (foundDeptSub !== -1) colDept = foundDeptSub;
+            else if (foundDeptAny !== -1) colDept = foundDeptAny;
+
+            if (foundMsnv !== -1) colMsnv = foundMsnv;
+            if (foundHo !== -1 && foundTen !== -1) {
+              colHo = foundHo;
+              colTen = foundTen;
+              colFullName = -1;
+            } else if (foundFullName !== -1) {
+              colFullName = foundFullName;
+              colHo = -1;
+              colTen = -1;
+            }
+            if (foundJob !== -1) colJob = foundJob;
+            if (foundDate !== -1) colDate = foundDate;
+          }
+        }
+
+        const extracted: Array<{
+          rowNumber: number;
+          msnv: string;
+          lastName: string;
+          firstName: string;
+          fullName: string;
+          department: string;
+          jobTitle: string;
+          joinDate: string;
+        }> = [];
+
+        for (let r = dataStartRow; r < rawMatrix.length; r++) {
+          const rawRow = rawMatrix[r] || [];
+          const fmtRow = fmtMatrix[r] || [];
+
+          const getText = (colIdx: number): string => {
+            if (colIdx < 0) return '';
+            const fmtVal = fmtRow[colIdx];
+            if (fmtVal !== undefined && fmtVal !== null && String(fmtVal).trim() !== '') {
+              return String(fmtVal).trim();
+            }
+            const rawVal = rawRow[colIdx];
+            return rawVal !== undefined && rawVal !== null ? String(rawVal).trim() : '';
           };
 
-          const msnvRaw = findVal(['msnv', 'mã số', 'ma so', 'mã nv', 'ma nv', 'id', 'code']);
-          const nameRaw = findVal(['họ và tên', 'ho va ten', 'họ tên', 'ho ten', 'tên', 'name']);
-          const deptRaw = findVal(['bộ phận', 'bo phan', 'phòng ban', 'phong ban', 'department', 'bp']);
-          const dateRaw = findVal(['ngày vào', 'ngay vao', 'ngày', 'date', 'join']);
+          const deptVal = getText(colDept);
+          const msnvVal = getText(colMsnv);
+          const hoVal = colHo >= 0 ? getText(colHo) : '';
+          const tenVal = colTen >= 0 ? getText(colTen) : '';
+          const fullVal =
+            colFullName >= 0
+              ? getText(colFullName)
+              : [hoVal, tenVal].filter(Boolean).join(' ').trim();
+          const jobVal = getText(colJob);
 
-          return {
-            rowNumber: idx + 2, // Excel row index (header is row 1)
-            msnv: String(msnvRaw ?? '').trim(),
-            fullName: String(nameRaw ?? '').trim(),
-            department: String(deptRaw ?? '').trim(),
-            joinDate: formatExcelDate(dateRaw),
-          };
-        });
+          // Date from Col L: prefer raw serial number if number, otherwise formatted text
+          const rawDateCell = colDate >= 0 ? rawRow[colDate] : '';
+          const fmtDateCell = colDate >= 0 ? fmtRow[colDate] : '';
+          const dateVal =
+            typeof rawDateCell === 'number'
+              ? formatExcelDate(rawDateCell)
+              : formatExcelDate(rawDateCell || fmtDateCell);
+
+          // Skip completely empty rows or repeated header/sub-header rows
+          if (!msnvVal && !fullVal && !deptVal && !dateVal) continue;
+          const msnvNorm = norm(msnvVal);
+          if (
+            msnvNorm === 'msnv' ||
+            msnvNorm.startsWith('manh') ||
+            norm(deptVal) === 'phòng ban con' ||
+            norm(deptVal).startsWith('bophancon')
+          ) {
+            continue;
+          }
+
+          let splitHo = hoVal;
+          let splitTen = tenVal;
+          if (!splitHo && !splitTen && fullVal) {
+            const parts = fullVal.split(/\s+/);
+            splitTen = parts.length > 1 ? parts[parts.length - 1] : fullVal;
+            splitHo = parts.length > 1 ? parts.slice(0, -1).join(' ') : '';
+          }
+
+          extracted.push({
+            rowNumber: r + 1, // 1-based Excel row number
+            msnv: msnvVal,
+            lastName: splitHo,
+            firstName: splitTen,
+            fullName: fullVal,
+            department: deptVal,
+            jobTitle: jobVal,
+            joinDate: dateVal,
+          });
+        }
+
+        if (extracted.length === 0) {
+          setParseError(
+            'Không tìm thấy dòng dữ liệu nhân viên nào trong các cột G -> L (PHÒNG BAN CON, MSNV, HỌ, TÊN, CÔNG VIỆC, NGÀY VÀO).'
+          );
+          setRawRows([]);
+          return;
+        }
 
         setRawRows(extracted);
       } catch (err) {
@@ -339,7 +581,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         setRawRows([]);
       }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   };
 
   const toggleRowSelection = (rowNumber: number) => {
@@ -419,10 +661,10 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
             <FileSpreadsheet className="w-6 h-6" />
             <div>
               <h2 className="text-lg font-bold">
-                Import Danh Sách Nhân Viên Từ File Excel (.xlsx, .xls)
+                Import Danh Sách Nhân Viên Từ File Excel (Cột G → L)
               </h2>
               <p className="text-xs text-blue-100">
-                Quy trình chuẩn: Tải file mẫu → Chọn file Excel → Xem trước & kiểm tra trùng/lỗi → Xác nhận Import
+                Tự động đọc chuẩn từ Cột G → L: PHÒNG BAN CON (G) · MSNV (H) · HỌ (I) · TÊN (J) · CÔNG VIỆC (K) · NGÀY VÀO (L)
               </p>
             </div>
           </div>
@@ -443,7 +685,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
             <div className="lg:col-span-7 flex flex-col justify-between gap-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-sm font-semibold text-slate-800">
-                  1. Chọn file Excel (.xlsx, .xls) và tải file mẫu chuẩn
+                  1. Chọn file Excel nhân sự (.xlsx, .xls) — Tự động lấy Cột G → L
                 </span>
                 <button
                   type="button"
@@ -451,7 +693,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  Tải File Excel Mẫu (.xlsx)
+                  Tải File Excel Mẫu Chuẩn (Cột A → L)
                 </button>
               </div>
 
@@ -459,10 +701,10 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 <Upload className="w-5 h-5 text-blue-600 shrink-0" />
                 <div className="text-left">
                   <div className="text-sm font-semibold text-slate-800">
-                    {fileName ? `Đã chọn: ${fileName}` : 'Bấm để chọn file Excel (.xlsx, .xls) từ máy tính'}
+                    {fileName ? `Đã chọn: ${fileName}` : 'Bấm để chọn file Excel danh sách nhân viên (.xlsx, .xls)'}
                   </div>
                   <div className="text-xs text-slate-500">
-                    Các cột tiêu chuẩn: 1. MSNV · 2. Họ và tên · 3. Bộ phận · 4. Ngày vào làm
+                    Đọc trực tiếp Cột G → L: G (Phòng ban con) · H (MSNV) · I (Họ) · J (Tên) · K (Công việc) · L (Ngày vào)
                   </div>
                 </div>
                 <input
@@ -649,20 +891,40 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 </div>
               </div>
 
-              {/* Data Table */}
-              <div className="border border-slate-200 rounded-lg overflow-hidden max-h-[360px] overflow-y-auto">
+              {/* Data Table (Columns G -> L matching VietSun HR Excel sheet) */}
+              <div className="border border-slate-200 rounded-lg overflow-hidden max-h-[380px] overflow-x-auto overflow-y-auto">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead className="bg-slate-100 text-slate-700 sticky top-0 z-10 border-b border-slate-200">
                     <tr>
-                      <th className="py-2.5 px-3 w-10 text-center">Chọn</th>
-                      <th className="py-2.5 px-3 w-16 font-mono-num">Dòng Excel</th>
-                      <th className="py-2.5 px-3 w-20 text-center">Ảnh 3×4</th>
-                      <th className="py-2.5 px-3 w-28">MSNV</th>
-                      <th className="py-2.5 px-3">Họ và tên</th>
-                      <th className="py-2.5 px-3">Bộ phận</th>
-                      <th className="py-2.5 px-3 w-28">Ngày vào làm</th>
-                      <th className="py-2.5 px-3 w-36">Trạng thái</th>
-                      <th className="py-2.5 px-3">Chi tiết kiểm tra / Nguyên nhân lỗi</th>
+                      <th className="py-2.5 px-2.5 w-10 text-center">Chọn</th>
+                      <th className="py-2.5 px-2.5 w-14 font-mono-num">Dòng</th>
+                      <th className="py-2.5 px-2.5 w-18 text-center">Ảnh 25×35</th>
+                      <th className="py-2.5 px-2.5">
+                        <span className="block font-bold text-slate-900">PHÒNG BAN CON (Cột G)</span>
+                        <span className="text-[10px] font-normal text-slate-500 font-mono-num">Bophancon6</span>
+                      </th>
+                      <th className="py-2.5 px-2.5 w-24">
+                        <span className="block font-bold text-slate-900">MSNV (Cột H)</span>
+                        <span className="text-[10px] font-normal text-slate-500 font-mono-num">Manhanvien</span>
+                      </th>
+                      <th className="py-2.5 px-2.5">
+                        <span className="block font-bold text-slate-900">HỌ (Cột I)</span>
+                        <span className="text-[10px] font-normal text-slate-500 font-mono-num">Ho</span>
+                      </th>
+                      <th className="py-2.5 px-2.5 w-20">
+                        <span className="block font-bold text-slate-900">TÊN (Cột J)</span>
+                        <span className="text-[10px] font-normal text-slate-500 font-mono-num">Ten</span>
+                      </th>
+                      <th className="py-2.5 px-2.5">
+                        <span className="block font-bold text-slate-900">CÔNG VIỆC (Cột K)</span>
+                        <span className="text-[10px] font-normal text-slate-500 font-mono-num">Congviec</span>
+                      </th>
+                      <th className="py-2.5 px-2.5 w-28">
+                        <span className="block font-bold text-slate-900">NGÀY VÀO (Cột L)</span>
+                        <span className="text-[10px] font-normal text-slate-500 font-mono-num">Ngayvaocty</span>
+                      </th>
+                      <th className="py-2.5 px-2.5 w-32">Trạng thái</th>
+                      <th className="py-2.5 px-2.5">Ghi chú / Kiểm tra</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 bg-white">
@@ -679,7 +941,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                                 : 'bg-slate-50/60 opacity-70'
                           }
                         >
-                          <td className="py-2 px-3 text-center">
+                          <td className="py-2 px-2.5 text-center">
                             {isError ? (
                               <span title="Dòng lỗi không thể import">
                                 <X className="w-4 h-4 text-red-500 mx-auto" />
@@ -698,27 +960,27 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                               </button>
                             )}
                           </td>
-                          <td className="py-2 px-3 font-mono-num text-slate-500">
+                          <td className="py-2 px-2.5 font-mono-num text-slate-500">
                             #{row.rowNumber}
                           </td>
-                          <td className="py-1.5 px-3 text-center">
+                          <td className="py-1.5 px-2.5 text-center">
                             {!isError && (
                               <label
                                 className="w-8 h-10 rounded border border-slate-300 bg-white overflow-hidden inline-flex flex-col items-center justify-center cursor-pointer hover:border-blue-600"
-                                title="Bấm để chọn ảnh 3×4 cho dòng này"
+                                title="Bấm để chọn ảnh 25×35mm cho dòng này"
                               >
                                 {row.photoUrl ? (
                                   <img
                                     src={row.photoUrl}
                                     alt={row.fullName}
                                     referrerPolicy="no-referrer"
-                                    className="w-full h-full object-cover"
+                                    className="w-full h-full object-cover object-top"
                                   />
                                 ) : (
                                   <div className="flex flex-col items-center justify-center text-blue-600">
                                     <Camera className="w-3 h-3" />
-                                    <span className="text-[8px] font-bold leading-none mt-0.5">
-                                      3×4
+                                    <span className="text-[7.5px] font-bold leading-none mt-0.5">
+                                      25×35
                                     </span>
                                   </div>
                                 )}
@@ -744,19 +1006,25 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                               </label>
                             )}
                           </td>
-                          <td className="py-2 px-3 font-mono-num font-semibold text-slate-900">
-                            {row.msnv || <span className="text-red-500 italic">(Trống)</span>}
-                          </td>
-                          <td className="py-2 px-3 font-medium text-slate-900">
-                            {row.fullName || <span className="text-red-500 italic">(Trống)</span>}
-                          </td>
-                          <td className="py-2 px-3 text-slate-700">
+                          <td className="py-2 px-2.5 text-slate-800 font-medium">
                             {row.department || <span className="text-red-500 italic">(Trống)</span>}
                           </td>
-                          <td className="py-2 px-3 font-mono-num text-slate-700">
+                          <td className="py-2 px-2.5 font-mono-num font-bold text-slate-900">
+                            {row.msnv || <span className="text-red-500 italic">(Trống)</span>}
+                          </td>
+                          <td className="py-2 px-2.5 text-slate-800">
+                            {row.lastName || <span className="text-slate-400 italic">—</span>}
+                          </td>
+                          <td className="py-2 px-2.5 font-bold text-slate-900">
+                            {row.firstName || <span className="text-red-500 italic">(Trống)</span>}
+                          </td>
+                          <td className="py-2 px-2.5 text-slate-600">
+                            {row.jobTitle || <span className="text-slate-400 italic">—</span>}
+                          </td>
+                          <td className="py-2 px-2.5 font-mono-num text-slate-800 font-medium">
                             {row.joinDate || <span className="text-red-500 italic">(Trống)</span>}
                           </td>
-                          <td className="py-2 px-3 font-semibold">
+                          <td className="py-2 px-2.5 font-semibold">
                             {row.status === 'valid_new' && (
                               <span className="text-emerald-700">Hợp lệ (Thêm mới)</span>
                             )}
@@ -767,18 +1035,18 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                               <span className="text-red-600">Dòng lỗi</span>
                             )}
                           </td>
-                          <td className="py-2 px-3">
+                          <td className="py-2 px-2.5">
                             {isError ? (
                               <span className="text-red-600 font-medium">
                                 {row.errors.join(' · ')}
                               </span>
                             ) : row.status === 'valid_update' ? (
                               <span className="text-blue-700">
-                                Sẽ cập nhật thông tin cho MSNV {row.msnv}
+                                Cập nhật thẻ: <strong>{row.fullName}</strong> ({row.msnv})
                               </span>
                             ) : (
                               <span className="text-emerald-700">
-                                Đầy đủ thông tin, MSNV không trùng
+                                In trên thẻ: <strong>{row.fullName.toUpperCase()}</strong>
                               </span>
                             )}
                           </td>
