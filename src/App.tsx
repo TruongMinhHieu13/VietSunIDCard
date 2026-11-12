@@ -422,9 +422,8 @@ export default function App() {
       };
     });
 
-    // If user clicked "Import & Chuyển Qua In Ngay", update DOM synchronously via flushSync
-    // and invoke window.print() BEFORE any async await so the browser preserves user activation!
-    if (triggerPrintImmediately && importedIds.length > 0) {
+    // Immediately update local employees & selectedEmployeeIds state so UI reflects imported rows right away
+    if (importedIds.length > 0) {
       flushSync(() => {
         setEmployees((prev) => {
           const map = new Map<string, Employee>(prev.map((e) => [e.id, e]));
@@ -447,10 +446,14 @@ export default function App() {
           );
         });
         setSelectedEmployeeIds(new Set(importedIds));
-        setIsImportModalOpen(false);
-        setActiveTab('print');
+        if (triggerPrintImmediately) {
+          setIsImportModalOpen(false);
+          setActiveTab('print');
+        }
       });
-      triggerBrowserCtrlP();
+      if (triggerPrintImmediately) {
+        triggerBrowserCtrlP();
+      }
     }
 
     try {
@@ -489,10 +492,6 @@ export default function App() {
         });
 
         await batch.commit();
-      }
-
-      if (importedIds.length > 0 && !triggerPrintImmediately) {
-        setSelectedEmployeeIds(new Set(importedIds));
       }
 
       // Record Import History Log

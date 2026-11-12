@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import {
   FileSpreadsheet,
@@ -12,6 +12,8 @@ import {
   Square,
   Printer,
   Camera,
+  Layers,
+  Filter,
 } from 'lucide-react';
 import { Employee } from '../types';
 import { compressImageTo3x4DataUrl } from './EmployeeManagementView';
@@ -30,6 +32,18 @@ export interface ParsedExcelRow {
   errors: string[];
   existingEmployeeId?: string;
   selected: boolean;
+}
+
+interface RawExtractedRow {
+  rowNumber: number;
+  msnv: string;
+  lastName: string;
+  firstName: string;
+  fullName: string;
+  department: string;
+  jobTitle: string;
+  joinDate: string;
+  isHiddenInExcel: boolean;
 }
 
 interface ExcelImportModalProps {
@@ -52,13 +66,33 @@ interface ExcelImportModalProps {
   onGoToPrintWithIds: (ids: string[]) => void;
 }
 
+function cleanUnicodeStr(val: unknown): string {
+  if (val === null || val === undefined) return '';
+  return String(val)
+    .normalize('NFC')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripViAccents(val: unknown): string {
+  return cleanUnicodeStr(val)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase();
+}
+
 function formatExcelDate(val: unknown): string {
   if (val === null || val === undefined || val === '') return '';
   if (typeof val === 'number') {
-    // Excel serial date conversion
+    const parsed = XLSX.SSF.parse_date_code(val);
+    if (parsed && parsed.y > 1900 && parsed.m >= 1 && parsed.d >= 1) {
+      return `${String(parsed.d).padStart(2, '0')}/${String(parsed.m).padStart(2, '0')}/${parsed.y}`;
+    }
     const utcDays = Math.floor(val - 25569);
-    const utcValue = utcDays * 86400;
-    const dateInfo = new Date(utcValue * 1000);
+    const dateInfo = new Date(utcDays * 86400 * 1000);
     if (!isNaN(dateInfo.getTime())) {
       const dd = String(dateInfo.getUTCDate()).padStart(2, '0');
       const mm = String(dateInfo.getUTCMonth() + 1).padStart(2, '0');
@@ -66,18 +100,59 @@ function formatExcelDate(val: unknown): string {
       return `${dd}/${mm}/${yyyy}`;
     }
   }
-  const str = String(val).trim();
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    const dd = String(val.getDate()).padStart(2, '0');
+    const mm = String(val.getMonth() + 1).padStart(2, '0');
+    const yyyy = val.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  }
+  const str = cleanUnicodeStr(val);
   // Convert YYYY-MM-DD to DD/MM/YYYY if matched
-  const isoMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  const isoMatch = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
   if (isoMatch) {
     return `${isoMatch[3].padStart(2, '0')}/${isoMatch[2].padStart(2, '0')}/${isoMatch[1]}`;
   }
   // Normalize D/M/YYYY to DD/MM/YYYY
-  const dmyMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  const dmyMatch = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/);
   if (dmyMatch) {
-    return `${dmyMatch[1].padStart(2, '0')}/${dmyMatch[2].padStart(2, '0')}/${dmyMatch[3]}`;
+    const yearStr = dmyMatch[3].length === 2 ? `20${dmyMatch[3]}` : dmyMatch[3];
+    return `${dmyMatch[1].padStart(2, '0')}/${dmyMatch[2].padStart(2, '0')}/${yearStr}`;
   }
   return str;
+}
+
+function readCellText(worksheet: XLSX.WorkSheet, r: number, c: number): string {
+  if (c < 0 || r < 0) return '';
+  const addr = XLSX.utils.encode_cell({ r, c });
+  const cell = worksheet[addr] as XLSX.CellObject | undefined;
+  if (!cell || cell.t === 'e' || cell.t === 'z') return '';
+  if (cell.w !== undefined && String(cell.w).trim() !== '') {
+    return cleanUnicodeStr(cell.w);
+  }
+  if (cell.v !== undefined && cell.v !== null) {
+    return cleanUnicodeStr(cell.v);
+  }
+  return '';
+}
+
+function readCellDate(worksheet: XLSX.WorkSheet, r: number, c: number): string {
+  if (c < 0 || r < 0) return '';
+  const addr = XLSX.utils.encode_cell({ r, c });
+  const cell = worksheet[addr] as XLSX.CellObject | undefined;
+  if (!cell || cell.t === 'e' || cell.t === 'z') return '';
+  if (cell.t === 'n' && typeof cell.v === 'number') {
+    return formatExcelDate(cell.v);
+  }
+  if (cell.t === 'd' && cell.v instanceof Date) {
+    return formatExcelDate(cell.v);
+  }
+  if (cell.v !== undefined && cell.v !== null && String(cell.v).trim() !== '') {
+    return formatExcelDate(cell.v);
+  }
+  if (cell.w !== undefined && String(cell.w).trim() !== '') {
+    return formatExcelDate(cell.w);
+  }
+  return '';
 }
 
 export function downloadSampleExcelTemplate() {
@@ -210,21 +285,19 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   onConfirmImport,
   onGoToPrintWithIds,
 }) => {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const workbookRef = useRef<XLSX.WorkBook | null>(null);
+
   const [fileName, setFileName] = useState<string>('');
-  const [rawRows, setRawRows] = useState<
-    Array<{
-      rowNumber: number;
-      msnv: string;
-      lastName: string;
-      firstName: string;
-      fullName: string;
-      department: string;
-      jobTitle: string;
-      joinDate: string;
-    }>
-  >([]);
+  const [sheetNames, setSheetNames] = useState<string[]>([]);
+  const [selectedSheetName, setSelectedSheetName] = useState<string>('');
+  const [detectedColumnsNote, setDetectedColumnsNote] = useState<string>('');
+  const [onlyVisibleExcelRows, setOnlyVisibleExcelRows] = useState<boolean>(true);
+  const [isParsingFile, setIsParsingFile] = useState<boolean>(false);
+
+  const [allExtractedRows, setAllExtractedRows] = useState<RawExtractedRow[]>([]);
   const [rowPhotos, setRowPhotos] = useState<Record<number, string>>({});
-  const [importMode, setImportMode] = useState<'add_only' | 'upsert'>('add_only');
+  const [importMode, setImportMode] = useState<'add_only' | 'upsert'>('upsert');
   const [deselectedRowNums, setDeselectedRowNums] = useState<Set<number>>(new Set());
   const [filterView, setFilterView] = useState<'all' | 'valid' | 'error'>('all');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -244,11 +317,24 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     return map;
   }, [existingEmployees]);
 
-  // Re-evaluate rows whenever rawRows, importMode, or existingEmployees change
+  const hiddenRowCountInSheet = useMemo(() => {
+    return allExtractedRows.filter((r) => r.isHiddenInExcel).length;
+  }, [allExtractedRows]);
+
+  const activeRawRows = useMemo(() => {
+    const visibleOnly = allExtractedRows.filter((r) => !r.isHiddenInExcel);
+    // If user enabled onlyVisibleExcelRows and there is at least 1 visible row, use visible rows
+    if (onlyVisibleExcelRows && visibleOnly.length > 0) {
+      return visibleOnly;
+    }
+    return allExtractedRows;
+  }, [allExtractedRows, onlyVisibleExcelRows]);
+
+  // Re-evaluate rows whenever activeRawRows, importMode, or existingEmployees change
   const evaluatedRows: ParsedExcelRow[] = useMemo(() => {
     const seenInFile = new Map<string, number>();
 
-    return rawRows.map((row) => {
+    return activeRawRows.map((row) => {
       const errors: string[] = [];
       const msnvClean = row.msnv.trim();
       const nameClean = row.fullName.trim();
@@ -263,6 +349,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       if (msnvClean.length > 50) errors.push('MSNV vượt quá 50 ký tự');
       if (nameClean.length > 120) errors.push('Họ và tên vượt quá 120 ký tự');
       if (deptClean.length > 120) errors.push('Phòng ban con vượt quá 120 ký tự');
+      if (dateClean.length > 30) errors.push('Ngày vào vượt quá 30 ký tự');
 
       const msnvKey = msnvClean.toLowerCase();
       if (msnvKey) {
@@ -277,7 +364,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
       const existingEmp = msnvKey ? existingMap.get(msnvKey) : undefined;
       if (existingEmp && importMode === 'add_only') {
-        errors.push(`Trùng MSNV "${msnvClean}" đã tồn tại trong hệ thống (${existingEmp.fullName})`);
+        errors.push(`Trùng MSNV "${msnvClean}" đã tồn tại (${existingEmp.fullName})`);
       }
 
       const isError = errors.length > 0;
@@ -303,7 +390,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         selected: !isError && !deselectedRowNums.has(row.rowNumber),
       };
     });
-  }, [rawRows, importMode, existingMap, deselectedRowNums, rowPhotos]);
+  }, [activeRawRows, importMode, existingMap, deselectedRowNums, rowPhotos]);
 
   const stats = useMemo(() => {
     const totalRows = evaluatedRows.length;
@@ -335,253 +422,345 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const parseSheetFromWorkbook = (wb: XLSX.WorkBook, sheetName: string) => {
+    const worksheet = wb.Sheets[sheetName];
+    if (!worksheet || !worksheet['!ref']) {
+      setParseError(`Sheet "${sheetName}" không có dữ liệu hoặc để trống.`);
+      setAllExtractedRows([]);
+      return;
+    }
 
+    const range = XLSX.utils.decode_range(worksheet['!ref']);
+    const maxScanHeaderRow = Math.min(range.e.r, 60);
+    const maxScanCol = Math.min(range.e.c, 35);
+
+    // Default column mapping: Exact Excel Columns G -> L (0-based indices: G=6, H=7, I=8, J=9, K=10, L=11)
+    let colDept = 6;   // Cột G: PHÒNG BAN CON (Bophancon6)
+    let colMsnv = 7;   // Cột H: MSNV (Manhanvien)
+    let colHo = 8;     // Cột I: HỌ (Ho)
+    let colTen = 9;    // Cột J: TÊN (Ten)
+    let colFullName = -1;
+    let colJob = 10;   // Cột K: CÔNG VIỆC (Congviec)
+    let colDate = 11;  // Cột L: NGÀY VÀO (Ngayvaocty)
+    let dataStartRow = 0;
+
+    // Scan first 60 rows to find the Vietnamese header row or sub-header row (Bophancon6 | Manhanvien | Ho | Ten | Congviec | Ngayvaocty)
+    let headerRowIdx = -1;
+    for (let r = 0; r <= maxScanHeaderRow; r++) {
+      let rowHasMsnv = false;
+      let rowHasDeptOrName = false;
+      for (let c = 0; c <= maxScanCol; c++) {
+        const s = stripViAccents(readCellText(worksheet, r, c));
+        if (!s) continue;
+        if (
+          s === 'msnv' ||
+          s.startsWith('manh') ||
+          s.includes('ma so nhan vien') ||
+          s === 'ma nv'
+        ) {
+          rowHasMsnv = true;
+        }
+        if (
+          s.includes('phong ban') ||
+          s.includes('bophan') ||
+          s.includes('bo phan') ||
+          s === 'ho' ||
+          s === 'ho va ten'
+        ) {
+          rowHasDeptOrName = true;
+        }
+      }
+      if (rowHasMsnv && rowHasDeptOrName) {
+        headerRowIdx = r;
+        break;
+      }
+    }
+
+    if (headerRowIdx !== -1) {
+      const hRow: string[] = [];
+      const nextRow: string[] = [];
+      for (let c = 0; c <= maxScanCol; c++) {
+        hRow[c] = stripViAccents(readCellText(worksheet, headerRowIdx, c));
+        nextRow[c] = stripViAccents(readCellText(worksheet, headerRowIdx + 1, c));
+      }
+
+      // Check if headerRowIdx + 1 is the English code sub-header row (No | Donvi | ... | Bophancon6 | Manhanvien | Ho | Ten | Congviec | Ngayvaocty)
+      const isNextRowSubHeader = nextRow.some(
+        (s) =>
+          s.includes('bophan') ||
+          s.startsWith('manh') ||
+          s.includes('ngayvao') ||
+          s === 'congviec' ||
+          s.startsWith('donvi') ||
+          s.startsWith('tinhtrang')
+      );
+
+      dataStartRow = isNextRowSubHeader ? headerRowIdx + 2 : headerRowIdx + 1;
+
+      // Check if Columns G -> L (indices 6 -> 11) match the standard VietSun HR layout
+      const isColGtoL =
+        hRow[7] === 'msnv' ||
+        nextRow[7]?.startsWith('manh') ||
+        hRow[6]?.includes('phong ban con') ||
+        nextRow[6]?.includes('bophancon');
+
+      if (isColGtoL) {
+        colDept = 6;
+        colMsnv = 7;
+        colHo = 8;
+        colTen = 9;
+        colFullName = -1;
+        colJob = 10;
+        colDate = 11;
+      } else {
+        // Find where MSNV is located
+        const findCol = (pred: (s: string) => boolean): number => {
+          for (let c = 0; c <= maxScanCol; c++) {
+            if (pred(hRow[c] || '')) return c;
+          }
+          if (isNextRowSubHeader) {
+            for (let c = 0; c <= maxScanCol; c++) {
+              if (pred(nextRow[c] || '')) return c;
+            }
+          }
+          return -1;
+        };
+
+        const foundDeptSub = findCol(
+          (s) => s.includes('phong ban con') || s.includes('bophancon')
+        );
+        const foundMsnv = findCol(
+          (s) => s === 'msnv' || s.startsWith('manh') || s.includes('ma so') || s === 'ma nv'
+        );
+        const foundHo = findCol((s) => s === 'ho' || s === 'ho dem');
+        const foundTen = findCol((s) => s === 'ten');
+        const foundFullName = findCol(
+          (s) => s.includes('ho va ten') || s === 'ho ten'
+        );
+        const foundJob = findCol(
+          (s) => s.includes('cong viec') || s.includes('congviec')
+        );
+        const foundDate = findCol(
+          (s) => s.includes('ngay vao') || s.includes('ngayvao')
+        );
+
+        // If PHÒNG BAN CON and MSNV are adjacent (like G & H shifted to another start column), lock the 6-column block G..L relative to foundDeptSub or foundMsnv!
+        if (foundMsnv !== -1 && foundHo === foundMsnv + 1 && foundTen === foundMsnv + 2) {
+          colDept = foundDeptSub !== -1 ? foundDeptSub : Math.max(0, foundMsnv - 1);
+          colMsnv = foundMsnv;
+          colHo = foundMsnv + 1;
+          colTen = foundMsnv + 2;
+          colFullName = -1;
+          colJob = foundJob !== -1 ? foundJob : foundMsnv + 3;
+          colDate = foundDate !== -1 ? foundDate : foundMsnv + 4;
+        } else {
+          const foundDeptAny = findCol(
+            (s) => s.includes('bo phan') || s.includes('phong ban') || s.includes('bophan')
+          );
+          if (foundDeptSub !== -1) colDept = foundDeptSub;
+          else if (foundDeptAny !== -1) colDept = foundDeptAny;
+
+          if (foundMsnv !== -1) colMsnv = foundMsnv;
+          if (foundHo !== -1 && foundTen !== -1) {
+            colHo = foundHo;
+            colTen = foundTen;
+            colFullName = -1;
+          } else if (foundFullName !== -1) {
+            colFullName = foundFullName;
+            colHo = -1;
+            colTen = -1;
+          }
+          if (foundJob !== -1) colJob = foundJob;
+          if (foundDate !== -1) colDate = foundDate;
+        }
+      }
+    }
+
+    const colLetter = (c: number) => (c >= 0 ? XLSX.utils.encode_col(c) : '?');
+    setDetectedColumnsNote(
+      colFullName >= 0
+        ? `Sheet "${sheetName}" · Cột Bộ phận: ${colLetter(colDept)} · MSNV: ${colLetter(colMsnv)} · Họ tên: ${colLetter(colFullName)} · Ngày vào: ${colLetter(colDate)}`
+        : `Sheet "${sheetName}" · Cột ${colLetter(colDept)} (Phòng ban con) · Cột ${colLetter(colMsnv)} (MSNV) · Cột ${colLetter(colHo)} (Họ) · Cột ${colLetter(colTen)} (Tên) · Cột ${colLetter(colJob)} (Công việc) · Cột ${colLetter(colDate)} (Ngày vào)`
+    );
+
+    const rowProps = worksheet['!rows'] || [];
+    const extracted: RawExtractedRow[] = [];
+    let emptyStreak = 0;
+    const maxRow = Math.min(range.e.r, 20000);
+
+    for (let r = dataStartRow; r <= maxRow; r++) {
+      const deptVal = readCellText(worksheet, r, colDept);
+      const msnvVal = readCellText(worksheet, r, colMsnv);
+      const hoVal = colHo >= 0 ? readCellText(worksheet, r, colHo) : '';
+      const tenVal = colTen >= 0 ? readCellText(worksheet, r, colTen) : '';
+      const fullVal =
+        colFullName >= 0
+          ? readCellText(worksheet, r, colFullName)
+          : [hoVal, tenVal].filter(Boolean).join(' ').trim();
+      const jobVal = readCellText(worksheet, r, colJob);
+      const dateVal = readCellDate(worksheet, r, colDate);
+
+      if (!msnvVal && !fullVal && !deptVal && !dateVal) {
+        emptyStreak++;
+        if (emptyStreak > 250) break;
+        continue;
+      }
+      emptyStreak = 0;
+
+      // Skip repeated header / sub-header / filter code rows
+      const msnvCheck = stripViAccents(msnvVal);
+      const deptCheck = stripViAccents(deptVal);
+      const hoCheck = stripViAccents(hoVal);
+      if (
+        msnvCheck === 'msnv' ||
+        msnvCheck.startsWith('manh') ||
+        deptCheck === 'phong ban con' ||
+        deptCheck.startsWith('bophancon') ||
+        (hoCheck === 'ho' && stripViAccents(tenVal) === 'ten')
+      ) {
+        continue;
+      }
+
+      // Also skip title rows above table where both MSNV and Name are empty
+      if (!msnvVal && !fullVal) {
+        continue;
+      }
+
+      let splitHo = hoVal;
+      let splitTen = tenVal;
+      if (!splitHo && !splitTen && fullVal) {
+        const parts = fullVal.split(/\s+/);
+        splitTen = parts.length > 1 ? parts[parts.length - 1] : fullVal;
+        splitHo = parts.length > 1 ? parts.slice(0, -1).join(' ') : '';
+      }
+
+      const isHidden = Boolean(rowProps[r]?.hidden);
+
+      extracted.push({
+        rowNumber: r + 1,
+        msnv: msnvVal,
+        lastName: splitHo,
+        firstName: splitTen,
+        fullName: fullVal,
+        department: deptVal,
+        jobTitle: jobVal,
+        joinDate: dateVal,
+        isHiddenInExcel: isHidden,
+      });
+    }
+
+    if (extracted.length === 0) {
+      setParseError(
+        `Sheet "${sheetName}" không có dòng dữ liệu nhân viên nào tại các cột G -> L (PHÒNG BAN CON, MSNV, HỌ, TÊN, CÔNG VIỆC, NGÀY VÀO). Nếu dữ liệu nằm ở Sheet khác, vui lòng chọn Sheet tương ứng bên dưới.`
+      );
+      setAllExtractedRows([]);
+      return;
+    }
+
+    setParseError(null);
+    setAllExtractedRows(extracted);
+  };
+
+  const processExcelFile = (file: File) => {
+    setIsParsingFile(true);
     setParseError(null);
     setImportResultBanner(null);
     setFileName(file.name);
     setDeselectedRowNums(new Set());
+    setRowPhotos({});
 
     const reader = new FileReader();
+    reader.onerror = () => {
+      setIsParsingFile(false);
+      setParseError('Không thể đọc file từ máy tính. Vui lòng thử chọn lại file.');
+    };
     reader.onload = (evt) => {
       try {
         const data = evt.target?.result;
-        const workbook = XLSX.read(data, { type: 'array' });
-        const firstSheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[firstSheetName];
+        const wb = XLSX.read(data, { type: 'array' });
+        workbookRef.current = wb;
 
-        // Read both raw values (for accurate Excel date serials) and formatted strings (for leading-zero MSNV like 00441)
-        const rawMatrix = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
-          header: 1,
-          defval: '',
-          raw: true,
-        });
-        const fmtMatrix = XLSX.utils.sheet_to_json<string[]>(worksheet, {
-          header: 1,
-          defval: '',
-          raw: false,
-        });
+        const allSheets = wb.SheetNames || [];
+        setSheetNames(allSheets);
 
-        if (rawMatrix.length === 0) {
-          setParseError('File Excel không có dữ liệu hoặc để trống.');
-          setRawRows([]);
+        if (allSheets.length === 0) {
+          setParseError('File Excel không có Sheet nào.');
+          setAllExtractedRows([]);
+          setIsParsingFile(false);
           return;
         }
 
-        const norm = (v: unknown) =>
-          String(v ?? '')
-            .trim()
-            .toLowerCase()
-            .replace(/\s+/g, ' ');
-
-        // Default column mapping: VietSun HR Sheet Columns G -> L (indices 6 -> 11)
-        let colDept = 6;   // Cột G: PHÒNG BAN CON (Bophancon6)
-        let colMsnv = 7;   // Cột H: MSNV (Manhanvien)
-        let colHo = 8;     // Cột I: HỌ (Ho)
-        let colTen = 9;    // Cột J: TÊN (Ten)
-        let colFullName = -1;
-        let colJob = 10;   // Cột K: CÔNG VIỆC (Congviec)
-        let colDate = 11;  // Cột L: NGÀY VÀO (Ngayvaocty)
-        let dataStartRow = 0;
-
-        // Detect header row within first 20 rows
-        let headerRowIdx = -1;
-        for (let r = 0; r < Math.min(20, fmtMatrix.length); r++) {
-          const rowCells = (fmtMatrix[r] || []).map(norm);
-          const hasMsnv = rowCells.some(
-            (c) =>
-              c === 'msnv' ||
-              c.startsWith('manh') ||
-              c.includes('mã số') ||
-              c.includes('ma so')
-          );
-          const hasDeptOrName = rowCells.some(
-            (c) =>
-              c.includes('phòng ban') ||
-              c.includes('phong ban') ||
-              c.includes('bophan') ||
-              c.includes('bộ phận') ||
-              c === 'họ' ||
-              c === 'ho' ||
-              c.includes('họ và tên')
-          );
-          if (hasMsnv && hasDeptOrName) {
-            headerRowIdx = r;
-            break;
-          }
-        }
-
-        if (headerRowIdx !== -1) {
-          const hRow = (fmtMatrix[headerRowIdx] || []).map(norm);
-          const nextRow = (fmtMatrix[headerRowIdx + 1] || []).map(norm);
-
-          // Check if headerRowIdx + 1 is the English/filter sub-header row (No | Donvi | ... | Bophancon6 | Manhanvien | Ho | Ten | Congviec | Ngayvaocty)
-          const isNextRowSubHeader = nextRow.some(
-            (c) =>
-              c.includes('bophan') ||
-              c.startsWith('manh') ||
-              c.includes('ngayvao') ||
-              c === 'congviec' ||
-              c === 'donvi' ||
-              c === 'tinhtrang'
-          );
-
-          dataStartRow = isNextRowSubHeader ? headerRowIdx + 2 : headerRowIdx + 1;
-
-          // If the sheet has at least 12 columns (A -> L) and Col H (7) is MSNV/Manh, use exact Columns G -> L (6 -> 11)
-          const isStandardGtoL =
-            (hRow.length >= 12 || nextRow.length >= 12) &&
-            (hRow[7]?.includes('msnv') ||
-              nextRow[7]?.startsWith('manh') ||
-              hRow[6]?.includes('phòng ban con') ||
-              nextRow[6]?.includes('bophancon'));
-
-          if (!isStandardGtoL) {
-            // Dynamic column lookup for sheets where G->L were copied into A->F or 4-column templates
-            const findCol = (predicate: (cell: string) => boolean): number => {
-              const idx1 = hRow.findIndex(predicate);
-              if (idx1 !== -1) return idx1;
-              if (isNextRowSubHeader) {
-                return nextRow.findIndex(predicate);
-              }
-              return -1;
-            };
-
-            const foundDeptSub = findCol(
-              (c) => c.includes('phòng ban con') || c.includes('phong ban con') || c.includes('bophancon')
-            );
-            const foundDeptAny = findCol(
-              (c) => c.includes('bộ phận') || c.includes('bo phan') || c.includes('phòng ban') || c.includes('bophan')
-            );
-            const foundMsnv = findCol(
-              (c) => c === 'msnv' || c.startsWith('manh') || c.includes('mã số') || c.includes('ma nv')
-            );
-            const foundHo = findCol((c) => c === 'họ' || c === 'ho' || c === 'họ đệm');
-            const foundTen = findCol((c) => c === 'tên' || c === 'ten');
-            const foundFullName = findCol(
-              (c) => c.includes('họ và tên') || c.includes('ho va ten') || c.includes('họ tên')
-            );
-            const foundJob = findCol(
-              (c) => c.includes('công việc') || c.includes('cong viec') || c.includes('congviec')
-            );
-            const foundDate = findCol(
-              (c) => c.includes('ngày vào') || c.includes('ngay vao') || c.includes('ngayvao')
-            );
-
-            if (foundDeptSub !== -1) colDept = foundDeptSub;
-            else if (foundDeptAny !== -1) colDept = foundDeptAny;
-
-            if (foundMsnv !== -1) colMsnv = foundMsnv;
-            if (foundHo !== -1 && foundTen !== -1) {
-              colHo = foundHo;
-              colTen = foundTen;
-              colFullName = -1;
-            } else if (foundFullName !== -1) {
-              colFullName = foundFullName;
-              colHo = -1;
-              colTen = -1;
+        // Smartly pick the best Sheet: prefer the sheet that contains PHÒNG BAN CON / Bophancon6 & MSNV / Manhanvien, and prefer Excel's activeTab
+        const wbProps = wb.Workbook as
+          | {
+              WBView?: Array<{ activeTab?: number }>;
+              Sheets?: Array<{ Hidden?: number }>;
             }
-            if (foundJob !== -1) colJob = foundJob;
-            if (foundDate !== -1) colDate = foundDate;
-          }
-        }
+          | undefined;
+        const activeTabIdx = wbProps?.WBView?.[0]?.activeTab ?? 0;
+        const sheetMeta = wbProps?.Sheets || [];
 
-        const extracted: Array<{
-          rowNumber: number;
-          msnv: string;
-          lastName: string;
-          firstName: string;
-          fullName: string;
-          department: string;
-          jobTitle: string;
-          joinDate: string;
-        }> = [];
+        let bestSheet = allSheets[activeTabIdx] || allSheets[0];
+        let bestScore = -1;
 
-        for (let r = dataStartRow; r < rawMatrix.length; r++) {
-          const rawRow = rawMatrix[r] || [];
-          const fmtRow = fmtMatrix[r] || [];
+        allSheets.forEach((sName, idx) => {
+          const isHiddenSheet = sheetMeta[idx]?.Hidden === 1 || sheetMeta[idx]?.Hidden === 2;
+          if (isHiddenSheet && allSheets.length > 1) return;
 
-          const getText = (colIdx: number): string => {
-            if (colIdx < 0) return '';
-            const fmtVal = fmtRow[colIdx];
-            if (fmtVal !== undefined && fmtVal !== null && String(fmtVal).trim() !== '') {
-              return String(fmtVal).trim();
+          const ws = wb.Sheets[sName];
+          if (!ws || !ws['!ref']) return;
+          const rRange = XLSX.utils.decode_range(ws['!ref']);
+          const scanR = Math.min(rRange.e.r, 40);
+          const scanC = Math.min(rRange.e.c, 20);
+
+          let score = idx === activeTabIdx ? 5 : 0;
+          for (let r = 0; r <= scanR; r++) {
+            for (let c = 0; c <= scanC; c++) {
+              const txt = stripViAccents(readCellText(ws, r, c));
+              if (!txt) continue;
+              if (txt === 'msnv' || txt.startsWith('manh')) score += 20;
+              if (txt.includes('phong ban con') || txt.includes('bophancon')) score += 30;
+              if (txt.includes('ngay vao') || txt.includes('ngayvaocty')) score += 15;
+              if (txt.includes('danh sach can bo cong nhan vien')) score += 15;
             }
-            const rawVal = rawRow[colIdx];
-            return rawVal !== undefined && rawVal !== null ? String(rawVal).trim() : '';
-          };
-
-          const deptVal = getText(colDept);
-          const msnvVal = getText(colMsnv);
-          const hoVal = colHo >= 0 ? getText(colHo) : '';
-          const tenVal = colTen >= 0 ? getText(colTen) : '';
-          const fullVal =
-            colFullName >= 0
-              ? getText(colFullName)
-              : [hoVal, tenVal].filter(Boolean).join(' ').trim();
-          const jobVal = getText(colJob);
-
-          // Date from Col L: prefer raw serial number if number, otherwise formatted text
-          const rawDateCell = colDate >= 0 ? rawRow[colDate] : '';
-          const fmtDateCell = colDate >= 0 ? fmtRow[colDate] : '';
-          const dateVal =
-            typeof rawDateCell === 'number'
-              ? formatExcelDate(rawDateCell)
-              : formatExcelDate(rawDateCell || fmtDateCell);
-
-          // Skip completely empty rows or repeated header/sub-header rows
-          if (!msnvVal && !fullVal && !deptVal && !dateVal) continue;
-          const msnvNorm = norm(msnvVal);
-          if (
-            msnvNorm === 'msnv' ||
-            msnvNorm.startsWith('manh') ||
-            norm(deptVal) === 'phòng ban con' ||
-            norm(deptVal).startsWith('bophancon')
-          ) {
-            continue;
           }
 
-          let splitHo = hoVal;
-          let splitTen = tenVal;
-          if (!splitHo && !splitTen && fullVal) {
-            const parts = fullVal.split(/\s+/);
-            splitTen = parts.length > 1 ? parts[parts.length - 1] : fullVal;
-            splitHo = parts.length > 1 ? parts.slice(0, -1).join(' ') : '';
+          if (score > bestScore) {
+            bestScore = score;
+            bestSheet = sName;
           }
+        });
 
-          extracted.push({
-            rowNumber: r + 1, // 1-based Excel row number
-            msnv: msnvVal,
-            lastName: splitHo,
-            firstName: splitTen,
-            fullName: fullVal,
-            department: deptVal,
-            jobTitle: jobVal,
-            joinDate: dateVal,
-          });
-        }
-
-        if (extracted.length === 0) {
-          setParseError(
-            'Không tìm thấy dòng dữ liệu nhân viên nào trong các cột G -> L (PHÒNG BAN CON, MSNV, HỌ, TÊN, CÔNG VIỆC, NGÀY VÀO).'
-          );
-          setRawRows([]);
-          return;
-        }
-
-        setRawRows(extracted);
+        setSelectedSheetName(bestSheet);
+        parseSheetFromWorkbook(wb, bestSheet);
       } catch (err) {
         setParseError(
           err instanceof Error
             ? `Không thể đọc file Excel: ${err.message}`
             : 'Định dạng file Excel không hợp lệ.'
         );
-        setRawRows([]);
+        setAllExtractedRows([]);
+      } finally {
+        setIsParsingFile(false);
       }
     };
     reader.readAsArrayBuffer(file);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Reset input value immediately so selecting the same file again ALWAYS fires onChange
+    e.target.value = '';
+    if (!file) return;
+    processExcelFile(file);
+  };
+
+  const handleSheetChange = (newSheetName: string) => {
+    setSelectedSheetName(newSheetName);
+    setDeselectedRowNums(new Set());
+    if (workbookRef.current) {
+      parseSheetFromWorkbook(workbookRef.current, newSheetName);
+    }
   };
 
   const toggleRowSelection = (rowNumber: number) => {
@@ -645,11 +824,18 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
   const handleReset = () => {
     setFileName('');
-    setRawRows([]);
+    setSheetNames([]);
+    setSelectedSheetName('');
+    setDetectedColumnsNote('');
+    setAllExtractedRows([]);
     setRowPhotos({});
     setDeselectedRowNums(new Set());
     setImportResultBanner(null);
     setParseError(null);
+    workbookRef.current = null;
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   return (
@@ -697,23 +883,89 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 </button>
               </div>
 
-              <label className="flex items-center justify-center gap-3 border-2 border-dashed border-blue-300 bg-white hover:bg-blue-50/40 rounded-lg p-4 cursor-pointer transition-colors">
-                <Upload className="w-5 h-5 text-blue-600 shrink-0" />
-                <div className="text-left">
+              <label
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const droppedFile = e.dataTransfer.files?.[0];
+                  if (droppedFile) {
+                    processExcelFile(droppedFile);
+                  }
+                }}
+                className="flex items-center justify-center gap-3 border-2 border-dashed border-blue-400 bg-white hover:bg-blue-50/50 rounded-lg p-4 cursor-pointer transition-colors"
+              >
+                {isParsingFile ? (
+                  <RefreshCw className="w-5 h-5 text-blue-600 animate-spin shrink-0" />
+                ) : (
+                  <Upload className="w-5 h-5 text-blue-600 shrink-0" />
+                )}
+                <div className="text-left flex-1">
                   <div className="text-sm font-semibold text-slate-800">
-                    {fileName ? `Đã chọn: ${fileName}` : 'Bấm để chọn file Excel danh sách nhân viên (.xlsx, .xls)'}
+                    {isParsingFile
+                      ? 'Đang đọc dữ liệu từ file Excel...'
+                      : fileName
+                        ? `Đã tải file: ${fileName} (Bấm hoặc kéo thả để chọn lại file)`
+                        : 'Bấm vào đây hoặc kéo thả file Excel (.xlsx, .xls) từ máy tính'}
                   </div>
                   <div className="text-xs text-slate-500">
                     Đọc trực tiếp Cột G → L: G (Phòng ban con) · H (MSNV) · I (Họ) · J (Tên) · K (Công việc) · L (Ngày vào)
                   </div>
                 </div>
                 <input
+                  ref={fileInputRef}
                   type="file"
-                  accept=".xlsx,.xls"
+                  accept=".xlsx,.xls,.xlsm,.xlsb,.csv"
                   onChange={handleFileUpload}
                   className="hidden"
                 />
               </label>
+
+              {/* Sheet Selector & Column Mapping Status */}
+              {(sheetNames.length > 0 || detectedColumnsNote) && (
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-blue-50/70 border border-blue-200 rounded-lg px-3 py-2 text-xs">
+                  {sheetNames.length > 1 ? (
+                    <div className="flex items-center gap-2">
+                      <Layers className="w-3.5 h-3.5 text-blue-700 shrink-0" />
+                      <span className="font-semibold text-slate-700">Chọn Sheet cần lấy:</span>
+                      <select
+                        value={selectedSheetName}
+                        onChange={(e) => handleSheetChange(e.target.value)}
+                        className="px-2.5 py-1 text-xs font-bold text-blue-800 bg-white border border-blue-300 rounded-md cursor-pointer"
+                      >
+                        {sheetNames.map((sName) => (
+                          <option key={sName} value={sName}>
+                            Sheet: {sName}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 text-blue-800 font-semibold">
+                      <Layers className="w-3.5 h-3.5 shrink-0" />
+                      <span>{detectedColumnsNote}</span>
+                    </div>
+                  )}
+
+                  {hiddenRowCountInSheet > 0 && (
+                    <label className="inline-flex items-center gap-1.5 font-semibold text-amber-800 bg-amber-100/80 border border-amber-300 px-2.5 py-1 rounded-md cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={onlyVisibleExcelRows}
+                        onChange={(e) => setOnlyVisibleExcelRows(e.target.checked)}
+                        className="accent-blue-700"
+                      />
+                      <Filter className="w-3 h-3" />
+                      <span>
+                        Chỉ lấy dòng đang lọc/hiển thị (Bỏ qua {hiddenRowCountInSheet} dòng ẩn trong Excel)
+                      </span>
+                    </label>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Duplicate Handling Option */}
