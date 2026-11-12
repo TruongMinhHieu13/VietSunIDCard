@@ -34,13 +34,14 @@ export function compressImageTo3x4DataUrl(file: File): Promise<string> {
       img.onerror = () => reject(new Error('Định dạng ảnh không hợp lệ'));
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const targetW = 300;
-        const targetH = 400;
+        // Exact 25mm x 35mm portrait ratio (5:7)
+        const targetW = 250;
+        const targetH = 350;
         canvas.width = targetW;
         canvas.height = targetH;
         const ctx = canvas.getContext('2d');
         if (!ctx) {
-          reject(new Error('Không thể xử lý khung ảnh 3x4'));
+          reject(new Error('Không thể xử lý khung ảnh 25x35mm'));
           return;
         }
         ctx.fillStyle = '#ffffff';
@@ -51,7 +52,7 @@ export function compressImageTo3x4DataUrl(file: File): Promise<string> {
         const dx = (targetW - drawW) / 2;
         const dy = (targetH - drawH) / 2;
         ctx.drawImage(img, dx, dy, drawW, drawH);
-        resolve(canvas.toDataURL('image/jpeg', 0.85));
+        resolve(canvas.toDataURL('image/jpeg', 0.88));
       };
       img.src = String(reader.result);
     };

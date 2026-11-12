@@ -668,7 +668,7 @@ export const CardDesignerView: React.FC<CardDesignerViewProps> = ({
                 <div>
                   <div className="flex justify-between text-xs mb-1">
                     <span className="font-semibold text-slate-700">
-                      Độ rộng khung ảnh chân dung (%)
+                      Độ rộng khung ảnh chân dung 25×35mm (%)
                     </span>
                     <span className="font-mono-num font-semibold">
                       {draft.photoWidthPercent}%
@@ -676,9 +676,9 @@ export const CardDesignerView: React.FC<CardDesignerViewProps> = ({
                   </div>
                   <input
                     type="range"
-                    min="22"
-                    max="40"
-                    step="1"
+                    min="18"
+                    max="38"
+                    step="0.5"
                     value={draft.photoWidthPercent}
                     onChange={(e) =>
                       setDraft({

@@ -58,9 +58,13 @@ export const IdCardPreview: React.FC<IdCardPreviewProps> = ({
   // Layout 1: VIETSUN ĐỒNG NAI (Authentic Table-Frame Design with Vector SVG Grid Lines so lines never drop in window.print)
   if (template.layoutStyle === 'vietsun_table') {
     const borderCol = template.borderColor || '#1c1917';
-    const photoWidthPct = Math.min(42, Math.max(22, template.photoWidthPercent || 28.5));
+    const rawPhotoPct = template.photoWidthPercent || 22.5;
+    // Normalize legacy 28%-30% default down to 22.5% to match the 25mm x 35mm photo ratio
+    const normalizedPhotoPct =
+      rawPhotoPct >= 27.5 && rawPhotoPct <= 30 ? 22.5 : rawPhotoPct;
+    const photoWidthPct = Math.min(38, Math.max(18, normalizedPhotoPct));
 
-    // SVG coordinate system (804 x 488 matches the inner padded area 80.4mm x 48.8mm)
+    // SVG coordinate system (804 x 488 matches the inner padded area)
     const innerLeft = 8;
     const innerTop = 8;
     const innerRight = 796;
@@ -68,11 +72,12 @@ export const IdCardPreview: React.FC<IdCardPreviewProps> = ({
     const innerW = innerRight - innerLeft; // 788
     const innerH = innerBottom - innerTop; // 472
 
-    const headerRatio = 0.29;
-    const yHeaderLine = Math.round(innerTop + innerH * headerRatio); // 145
-    const xPhotoLine = Math.round(innerLeft + innerW * (photoWidthPct / 100)); // ~233
+    // Taller header (37%) so the photo cell below is shorter and fits 25mm x 35mm proportion
+    const headerRatio = 0.37;
+    const yHeaderLine = Math.round(innerTop + innerH * headerRatio); // 183
+    const xPhotoLine = Math.round(innerLeft + innerW * (photoWidthPct / 100)); // ~185
 
-    const bodyH = innerBottom - yHeaderLine; // 335
+    const bodyH = innerBottom - yHeaderLine; // 297
     const yRow1 = Math.round(yHeaderLine + bodyH * 0.25);
     const yRow2 = Math.round(yHeaderLine + bodyH * 0.5);
     const yRow3 = Math.round(yHeaderLine + bodyH * 0.75);
@@ -94,56 +99,56 @@ export const IdCardPreview: React.FC<IdCardPreviewProps> = ({
                 height: `${(innerH / 488) * 100}%`,
               }}
             >
-              {/* Top Header Row (29% height) */}
+              {/* Top Header Row (37% height — taller header so photo below is shorter) */}
               <div
-                className="w-full flex items-center px-2 box-border shrink-0"
+                className="w-full flex items-center px-2.5 box-border shrink-0"
                 style={{ height: `${headerRatio * 100}%` }}
               >
                 {/* Top-Left Logo Block */}
                 <div
                   className="shrink-0 flex items-center justify-start pr-1.5"
-                  style={{ width: `${photoWidthPct + 2}%` }}
+                  style={{ width: `${Math.min(34, photoWidthPct + 6.5)}%` }}
                 >
                   <img
                     src={template.logoUrl || OFFICIAL_VIETSUN_LOGO}
                     alt="VIETSUN Logo"
                     referrerPolicy="no-referrer"
-                    className="max-h-[11.5mm] w-full object-contain object-left"
+                    className="max-h-[12.5mm] w-full object-contain object-left"
                   />
                 </div>
 
                 {/* Top-Right Company Title Block */}
-                <div className="flex-1 flex flex-col items-center justify-center text-center leading-[1.18] pl-1">
+                <div className="flex-1 flex flex-col items-center justify-center text-center leading-[1.26] pl-1">
                   <div
                     className="font-bold uppercase tracking-wide"
-                    style={{ fontSize: `${template.headerFontSize || 8.5}px` }}
+                    style={{ fontSize: `${(template.headerFontSize || 8.5) + 0.5}px` }}
                   >
                     {template.companyBranch || 'VIETSUN ĐỒNG NAI'}
                   </div>
                   <div
                     className="font-bold uppercase"
-                    style={{ fontSize: `${(template.headerFontSize || 8.5) - 0.3}px` }}
+                    style={{ fontSize: `${(template.headerFontSize || 8.5) + 0.2}px` }}
                   >
                     {template.companyNameLine1 || 'CHI NHÁNH CÔNG TY CỔ PHẦN'}
                   </div>
                   <div
                     className="font-bold uppercase"
-                    style={{ fontSize: `${(template.headerFontSize || 8.5) - 0.3}px` }}
+                    style={{ fontSize: `${(template.headerFontSize || 8.5) + 0.2}px` }}
                   >
                     {template.companyNameLine2 || 'ĐẦU TƯ MẶT TRỜI VIỆT'}
                   </div>
                   <div
-                    className="font-bold tracking-[0.25em] leading-none mt-[1px]"
-                    style={{ fontSize: '7px' }}
+                    className="font-bold tracking-[0.25em] leading-none mt-[2px]"
+                    style={{ fontSize: '7.5px' }}
                   >
                     * * * * * *
                   </div>
                 </div>
               </div>
 
-              {/* Bottom Body Section (71% height) */}
+              {/* Bottom Body Section (63% height — shorter photo cell matching 25mm x 35mm ratio) */}
               <div className="flex-1 w-full flex overflow-hidden">
-                {/* Left Column: 3x4 Portrait Photo */}
+                {/* Left Column: 25mm x 35mm Portrait Photo */}
                 <div
                   className="h-full shrink-0 relative overflow-hidden"
                   style={{
@@ -156,7 +161,7 @@ export const IdCardPreview: React.FC<IdCardPreviewProps> = ({
                       src={employee.photoUrl}
                       alt={employee.fullName}
                       referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover object-top"
                     />
                   ) : (
                     <DefaultPortraitAvatar

@@ -146,7 +146,7 @@ export const DEFAULT_CARD_TEMPLATES: Omit<CardTemplate, 'id' | 'ownerId' | 'crea
     headerFontSize: 8.5,
     deptPrefix: 'BP. ',
     photoBgColor: '#ffffff',
-    photoWidthPercent: 28,
+    photoWidthPercent: 22.5,
     nameOffsetY: 0,
     msnvOffsetY: 0,
     deptOffsetY: 0,
