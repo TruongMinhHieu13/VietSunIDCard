@@ -1,0 +1,6 @@
+{
+  "name": "VietSun ID Card & HR Manager",
+  "description": "Hệ thống quản lý nhân sự, nhập xuất Excel, thiết kế và in thẻ nhân viên hàng loạt chuẩn kích thước CR80/A4.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

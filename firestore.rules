@@ -1,0 +1,253 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Hardened Global Helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidWorkspaceOwner(ownerId) {
+      return ownerId is string && ownerId.size() >= 1 && ownerId.size() <= 128 && (
+        ownerId == 'vietsun_workspace' ||
+        (request.auth != null && request.auth.token.email_verified == true && ownerId == request.auth.uid)
+      );
+    }
+
+    // Entity Validators
+    function isValidEmployee(data) {
+      return data.keys().hasAll([
+        'msnv', 'fullName', 'department', 'joinDate', 'photoUrl',
+        'printCount', 'lastPrintedAt', 'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'msnv', 'fullName', 'department', 'joinDate', 'photoUrl',
+        'printCount', 'lastPrintedAt', 'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.msnv is string && data.msnv.size() >= 1 && data.msnv.size() <= 50 &&
+      data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 120 &&
+      data.department is string && data.department.size() >= 1 && data.department.size() <= 120 &&
+      data.joinDate is string && data.joinDate.size() >= 1 && data.joinDate.size() <= 30 &&
+      data.photoUrl is string && data.photoUrl.size() >= 0 && data.photoUrl.size() <= 500000 &&
+      data.printCount is number && data.printCount >= 0 &&
+      data.lastPrintedAt is string && data.lastPrintedAt.size() >= 0 && data.lastPrintedAt.size() <= 40 &&
+      isValidWorkspaceOwner(data.ownerId) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidCardTemplate(data) {
+      return data.keys().hasAll([
+        'name', 'layoutStyle', 'orientation', 'primaryColor', 'secondaryColor',
+        'backgroundColor', 'textColor', 'borderColor', 'fontFamily',
+        'companyBranch', 'companyNameLine1', 'companyNameLine2', 'companyTagline',
+        'logoText', 'logoUrl', 'showStamp', 'stampOpacity', 'stampOffsetX', 'stampOffsetY',
+        'nameFontSize', 'msnvFontSize', 'deptFontSize', 'dateFontSize', 'headerFontSize',
+        'deptPrefix', 'photoBgColor', 'photoWidthPercent',
+        'nameOffsetY', 'msnvOffsetY', 'deptOffsetY', 'dateOffsetY',
+        'backTitle', 'backRules', 'backAddress', 'backPhone', 'showQrOnBack',
+        'isDefault', 'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'name', 'layoutStyle', 'orientation', 'primaryColor', 'secondaryColor',
+        'backgroundColor', 'textColor', 'borderColor', 'fontFamily',
+        'companyBranch', 'companyNameLine1', 'companyNameLine2', 'companyTagline',
+        'logoText', 'logoUrl', 'showStamp', 'stampOpacity', 'stampOffsetX', 'stampOffsetY',
+        'nameFontSize', 'msnvFontSize', 'deptFontSize', 'dateFontSize', 'headerFontSize',
+        'deptPrefix', 'photoBgColor', 'photoWidthPercent',
+        'nameOffsetY', 'msnvOffsetY', 'deptOffsetY', 'dateOffsetY',
+        'backTitle', 'backRules', 'backAddress', 'backPhone', 'showQrOnBack',
+        'isDefault', 'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+      data.layoutStyle is string && data.layoutStyle in ['vietsun_table', 'modern_corporate', 'minimal_vertical', 'custom_freeform'] &&
+      data.orientation is string && data.orientation in ['landscape', 'portrait'] &&
+      data.primaryColor is string && data.primaryColor.size() >= 1 && data.primaryColor.size() <= 30 &&
+      data.secondaryColor is string && data.secondaryColor.size() >= 1 && data.secondaryColor.size() <= 30 &&
+      data.backgroundColor is string && data.backgroundColor.size() >= 1 && data.backgroundColor.size() <= 30 &&
+      data.textColor is string && data.textColor.size() >= 1 && data.textColor.size() <= 30 &&
+      data.borderColor is string && data.borderColor.size() >= 1 && data.borderColor.size() <= 30 &&
+      data.fontFamily is string && data.fontFamily.size() >= 1 && data.fontFamily.size() <= 80 &&
+      data.companyBranch is string && data.companyBranch.size() <= 120 &&
+      data.companyNameLine1 is string && data.companyNameLine1.size() <= 120 &&
+      data.companyNameLine2 is string && data.companyNameLine2.size() <= 120 &&
+      data.companyTagline is string && data.companyTagline.size() <= 100 &&
+      data.logoText is string && data.logoText.size() <= 60 &&
+      data.logoUrl is string && data.logoUrl.size() <= 300000 &&
+      data.showStamp is bool &&
+      data.stampOpacity is number &&
+      data.stampOffsetX is number &&
+      data.stampOffsetY is number &&
+      data.nameFontSize is number &&
+      data.msnvFontSize is number &&
+      data.deptFontSize is number &&
+      data.dateFontSize is number &&
+      data.headerFontSize is number &&
+      data.deptPrefix is string && data.deptPrefix.size() <= 30 &&
+      data.photoBgColor is string && data.photoBgColor.size() >= 1 && data.photoBgColor.size() <= 30 &&
+      data.photoWidthPercent is number &&
+      data.nameOffsetY is number &&
+      data.msnvOffsetY is number &&
+      data.deptOffsetY is number &&
+      data.dateOffsetY is number &&
+      data.backTitle is string && data.backTitle.size() <= 120 &&
+      data.backRules is string && data.backRules.size() <= 1000 &&
+      data.backAddress is string && data.backAddress.size() <= 300 &&
+      data.backPhone is string && data.backPhone.size() <= 60 &&
+      data.showQrOnBack is bool &&
+      data.isDefault is bool &&
+      isValidWorkspaceOwner(data.ownerId) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidImportHistory(data) {
+      return data.keys().hasAll([
+        'fileName', 'importMode', 'totalRows', 'validCount', 'errorCount',
+        'importedCount', 'updatedCount', 'summaryNote', 'ownerId', 'createdAt'
+      ]) &&
+      data.keys().hasOnly([
+        'fileName', 'importMode', 'totalRows', 'validCount', 'errorCount',
+        'importedCount', 'updatedCount', 'summaryNote', 'ownerId', 'createdAt'
+      ]) &&
+      data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 200 &&
+      data.importMode is string && data.importMode in ['add_only', 'upsert'] &&
+      data.totalRows is number && data.totalRows >= 0 &&
+      data.validCount is number && data.validCount >= 0 &&
+      data.errorCount is number && data.errorCount >= 0 &&
+      data.importedCount is number && data.importedCount >= 0 &&
+      data.updatedCount is number && data.updatedCount >= 0 &&
+      data.summaryNote is string && data.summaryNote.size() <= 500 &&
+      isValidWorkspaceOwner(data.ownerId) &&
+      data.createdAt is timestamp;
+    }
+
+    function isValidPrintHistory(data) {
+      return data.keys().hasAll([
+        'printMode', 'templateName', 'totalCards', 'totalPages',
+        'paperSize', 'duplex', 'employeeSummary', 'ownerId', 'createdAt'
+      ]) &&
+      data.keys().hasOnly([
+        'printMode', 'templateName', 'totalCards', 'totalPages',
+        'paperSize', 'duplex', 'employeeSummary', 'ownerId', 'createdAt'
+      ]) &&
+      data.printMode is string && data.printMode in ['a4_grid', 'cr80_direct', 'pdf_export'] &&
+      data.templateName is string && data.templateName.size() >= 1 && data.templateName.size() <= 100 &&
+      data.totalCards is number && data.totalCards >= 1 &&
+      data.totalPages is number && data.totalPages >= 1 &&
+      data.paperSize is string && data.paperSize.size() >= 1 && data.paperSize.size() <= 30 &&
+      data.duplex is bool &&
+      data.employeeSummary is string && data.employeeSummary.size() <= 2000 &&
+      isValidWorkspaceOwner(data.ownerId) &&
+      data.createdAt is timestamp;
+    }
+
+    function isValidAppSettings(data) {
+      return data.keys().hasAll([
+        'companyName', 'companyBranch', 'companySubName', 'logoUrl',
+        'defaultPaperSize', 'defaultCols', 'defaultRows', 'defaultGapMm',
+        'defaultMarginMm', 'cardWidthMm', 'cardHeightMm', 'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'companyName', 'companyBranch', 'companySubName', 'logoUrl',
+        'defaultPaperSize', 'defaultCols', 'defaultRows', 'defaultGapMm',
+        'defaultMarginMm', 'cardWidthMm', 'cardHeightMm', 'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.companyName is string && data.companyName.size() >= 1 && data.companyName.size() <= 150 &&
+      data.companyBranch is string && data.companyBranch.size() <= 150 &&
+      data.companySubName is string && data.companySubName.size() <= 150 &&
+      data.logoUrl is string && data.logoUrl.size() <= 300000 &&
+      data.defaultPaperSize is string && data.defaultPaperSize in ['A4', 'CR80', 'Letter'] &&
+      data.defaultCols is number && data.defaultCols >= 1 && data.defaultCols <= 10 &&
+      data.defaultRows is number && data.defaultRows >= 1 && data.defaultRows <= 20 &&
+      data.defaultGapMm is number && data.defaultGapMm >= 0 && data.defaultGapMm <= 50 &&
+      data.defaultMarginMm is number && data.defaultMarginMm >= 0 && data.defaultMarginMm <= 50 &&
+      data.cardWidthMm is number && data.cardWidthMm >= 20 && data.cardWidthMm <= 200 &&
+      data.cardHeightMm is number && data.cardHeightMm >= 20 && data.cardHeightMm <= 200 &&
+      isValidWorkspaceOwner(data.ownerId) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    match /employees/{employeeId} {
+      allow get: if isValidId(employeeId) && isValidWorkspaceOwner(existing().ownerId);
+      allow list: if isValidWorkspaceOwner(existing().ownerId);
+      allow create: if isValidId(employeeId) && isValidEmployee(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(employeeId) && isValidEmployee(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'msnv', 'fullName', 'department', 'joinDate', 'photoUrl', 'printCount', 'lastPrintedAt', 'updatedAt'
+        ]);
+      allow delete: if isValidId(employeeId) && isValidWorkspaceOwner(existing().ownerId);
+    }
+
+    match /templates/{templateId} {
+      allow get: if isValidId(templateId) && isValidWorkspaceOwner(existing().ownerId);
+      allow list: if isValidWorkspaceOwner(existing().ownerId);
+      allow create: if isValidId(templateId) && isValidCardTemplate(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(templateId) && isValidCardTemplate(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'layoutStyle', 'orientation', 'primaryColor', 'secondaryColor',
+          'backgroundColor', 'textColor', 'borderColor', 'fontFamily',
+          'companyBranch', 'companyNameLine1', 'companyNameLine2', 'companyTagline',
+          'logoText', 'logoUrl', 'showStamp', 'stampOpacity', 'stampOffsetX', 'stampOffsetY',
+          'nameFontSize', 'msnvFontSize', 'deptFontSize', 'dateFontSize', 'headerFontSize',
+          'deptPrefix', 'photoBgColor', 'photoWidthPercent',
+          'nameOffsetY', 'msnvOffsetY', 'deptOffsetY', 'dateOffsetY',
+          'backTitle', 'backRules', 'backAddress', 'backPhone', 'showQrOnBack',
+          'isDefault', 'updatedAt'
+        ]);
+      allow delete: if isValidId(templateId) && isValidWorkspaceOwner(existing().ownerId);
+    }
+
+    match /import_logs/{logId} {
+      allow get: if isValidId(logId) && isValidWorkspaceOwner(existing().ownerId);
+      allow list: if isValidWorkspaceOwner(existing().ownerId);
+      allow create: if isValidId(logId) && isValidImportHistory(incoming()) && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(logId) && isValidWorkspaceOwner(existing().ownerId);
+    }
+
+    match /print_logs/{logId} {
+      allow get: if isValidId(logId) && isValidWorkspaceOwner(existing().ownerId);
+      allow list: if isValidWorkspaceOwner(existing().ownerId);
+      allow create: if isValidId(logId) && isValidPrintHistory(incoming()) && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(logId) && isValidWorkspaceOwner(existing().ownerId);
+    }
+
+    match /settings/{settingId} {
+      allow get: if isValidId(settingId) && isValidWorkspaceOwner(existing().ownerId);
+      allow list: if isValidWorkspaceOwner(existing().ownerId);
+      allow create: if isValidId(settingId) && isValidAppSettings(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(settingId) && isValidAppSettings(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'companyName', 'companyBranch', 'companySubName', 'logoUrl',
+          'defaultPaperSize', 'defaultCols', 'defaultRows', 'defaultGapMm',
+          'defaultMarginMm', 'cardWidthMm', 'cardHeightMm', 'updatedAt'
+        ]);
+      allow delete: if isValidId(settingId) && isValidWorkspaceOwner(existing().ownerId);
+    }
+  }
+}

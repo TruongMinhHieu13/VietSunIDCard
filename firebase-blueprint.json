@@ -1,0 +1,504 @@
+{
+  "entities": {
+    "Employee": {
+      "title": "Employee",
+      "description": "Employee record with ID card metadata and portrait photo",
+      "type": "object",
+      "properties": {
+        "msnv": {
+          "type": "string",
+          "description": "Unique employee code (MSNV)",
+          "minLength": 1,
+          "maxLength": 50
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Full name of the employee",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "department": {
+          "type": "string",
+          "description": "Department name",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "joinDate": {
+          "type": "string",
+          "description": "Join date in DD/MM/YYYY format",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "Portrait image URL or compressed base64 data URI",
+          "minLength": 0,
+          "maxLength": 500000
+        },
+        "printCount": {
+          "type": "number",
+          "description": "Number of times the ID card was printed"
+        },
+        "lastPrintedAt": {
+          "type": "string",
+          "description": "Formatted timestamp of last print",
+          "minLength": 0,
+          "maxLength": 40
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the administrator who manages this record",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "msnv",
+        "fullName",
+        "department",
+        "joinDate",
+        "photoUrl",
+        "printCount",
+        "lastPrintedAt",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CardTemplate": {
+      "title": "CardTemplate",
+      "description": "Reusable front and back ID card design template",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "layoutStyle": {
+          "type": "string",
+          "enum": ["vietsun_table", "modern_corporate", "minimal_vertical", "custom_freeform"]
+        },
+        "orientation": {
+          "type": "string",
+          "enum": ["landscape", "portrait"]
+        },
+        "primaryColor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "secondaryColor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "backgroundColor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "textColor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "borderColor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "fontFamily": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "companyBranch": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120
+        },
+        "companyNameLine1": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120
+        },
+        "companyNameLine2": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120
+        },
+        "companyTagline": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 100
+        },
+        "logoText": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 60
+        },
+        "logoUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300000
+        },
+        "showStamp": {
+          "type": "boolean"
+        },
+        "stampOpacity": {
+          "type": "number"
+        },
+        "stampOffsetX": {
+          "type": "number"
+        },
+        "stampOffsetY": {
+          "type": "number"
+        },
+        "nameFontSize": {
+          "type": "number"
+        },
+        "msnvFontSize": {
+          "type": "number"
+        },
+        "deptFontSize": {
+          "type": "number"
+        },
+        "dateFontSize": {
+          "type": "number"
+        },
+        "headerFontSize": {
+          "type": "number"
+        },
+        "deptPrefix": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 30
+        },
+        "photoBgColor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "photoWidthPercent": {
+          "type": "number"
+        },
+        "nameOffsetY": {
+          "type": "number"
+        },
+        "msnvOffsetY": {
+          "type": "number"
+        },
+        "deptOffsetY": {
+          "type": "number"
+        },
+        "dateOffsetY": {
+          "type": "number"
+        },
+        "backTitle": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120
+        },
+        "backRules": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000
+        },
+        "backAddress": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300
+        },
+        "backPhone": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 60
+        },
+        "showQrOnBack": {
+          "type": "boolean"
+        },
+        "isDefault": {
+          "type": "boolean"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "name",
+        "layoutStyle",
+        "orientation",
+        "primaryColor",
+        "secondaryColor",
+        "backgroundColor",
+        "textColor",
+        "borderColor",
+        "fontFamily",
+        "companyBranch",
+        "companyNameLine1",
+        "companyNameLine2",
+        "companyTagline",
+        "logoText",
+        "logoUrl",
+        "showStamp",
+        "stampOpacity",
+        "stampOffsetX",
+        "stampOffsetY",
+        "nameFontSize",
+        "msnvFontSize",
+        "deptFontSize",
+        "dateFontSize",
+        "headerFontSize",
+        "deptPrefix",
+        "photoBgColor",
+        "photoWidthPercent",
+        "nameOffsetY",
+        "msnvOffsetY",
+        "deptOffsetY",
+        "dateOffsetY",
+        "backTitle",
+        "backRules",
+        "backAddress",
+        "backPhone",
+        "showQrOnBack",
+        "isDefault",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ImportHistory": {
+      "title": "ImportHistory",
+      "description": "Audit log of Excel batch imports",
+      "type": "object",
+      "properties": {
+        "fileName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "importMode": {
+          "type": "string",
+          "enum": ["add_only", "upsert"]
+        },
+        "totalRows": {
+          "type": "number"
+        },
+        "validCount": {
+          "type": "number"
+        },
+        "errorCount": {
+          "type": "number"
+        },
+        "importedCount": {
+          "type": "number"
+        },
+        "updatedCount": {
+          "type": "number"
+        },
+        "summaryNote": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 500
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "fileName",
+        "importMode",
+        "totalRows",
+        "validCount",
+        "errorCount",
+        "importedCount",
+        "updatedCount",
+        "summaryNote",
+        "ownerId",
+        "createdAt"
+      ]
+    },
+    "PrintHistory": {
+      "title": "PrintHistory",
+      "description": "Audit log of batch ID card printing and PDF exports",
+      "type": "object",
+      "properties": {
+        "printMode": {
+          "type": "string",
+          "enum": ["a4_grid", "cr80_direct", "pdf_export"]
+        },
+        "templateName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "totalCards": {
+          "type": "number"
+        },
+        "totalPages": {
+          "type": "number"
+        },
+        "paperSize": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "duplex": {
+          "type": "boolean"
+        },
+        "employeeSummary": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 2000
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "printMode",
+        "templateName",
+        "totalCards",
+        "totalPages",
+        "paperSize",
+        "duplex",
+        "employeeSummary",
+        "ownerId",
+        "createdAt"
+      ]
+    },
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "System-wide company branding and default print configuration",
+      "type": "object",
+      "properties": {
+        "companyName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "companyBranch": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 150
+        },
+        "companySubName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 150
+        },
+        "logoUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300000
+        },
+        "defaultPaperSize": {
+          "type": "string",
+          "enum": ["A4", "CR80", "Letter"]
+        },
+        "defaultCols": {
+          "type": "number"
+        },
+        "defaultRows": {
+          "type": "number"
+        },
+        "defaultGapMm": {
+          "type": "number"
+        },
+        "defaultMarginMm": {
+          "type": "number"
+        },
+        "cardWidthMm": {
+          "type": "number"
+        },
+        "cardHeightMm": {
+          "type": "number"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "companyName",
+        "companyBranch",
+        "companySubName",
+        "logoUrl",
+        "defaultPaperSize",
+        "defaultCols",
+        "defaultRows",
+        "defaultGapMm",
+        "defaultMarginMm",
+        "cardWidthMm",
+        "cardHeightMm",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/employees/{employeeId}": {
+      "schema": { "$ref": "#/entities/Employee" },
+      "description": "Employee master records"
+    },
+    "/templates/{templateId}": {
+      "schema": { "$ref": "#/entities/CardTemplate" },
+      "description": "Saved ID card templates"
+    },
+    "/import_logs/{logId}": {
+      "schema": { "$ref": "#/entities/ImportHistory" },
+      "description": "Excel import history logs"
+    },
+    "/print_logs/{logId}": {
+      "schema": { "$ref": "#/entities/PrintHistory" },
+      "description": "ID card batch print history logs"
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/AppSettings" },
+      "description": "Organization and print configuration per user"
+    }
+  }
+}
