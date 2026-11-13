@@ -31,11 +31,14 @@ import {
   DetectedFaceBox,
   OUTPUT_3X4_HEIGHT_PX,
   OUTPUT_3X4_WIDTH_PX,
+  QuadCorners,
   computeIdCropConfigFromFace,
   detectFacesInImage,
   loadImageFromFile,
   matchEmployeeByPhotoFileName,
   renderCroppedIdPhotoToDataUrl,
+  timKhungTheoMep,
+  timKhungTheoPhong,
   tryMethodB_TableColorBlockDeskew,
 } from '../utils/faceDetectionCrop';
 import { IdCardPreview } from './IdCardPreview';
@@ -219,20 +222,31 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
           );
         }
 
+        const stampNote =
+          recommendedConfig.detectedStamps &&
+          recommendedConfig.detectedStamps.length > 0
+            ? ` · Đã xóa ${recommendedConfig.detectedStamps.length} dấu đỏ đè lên ảnh`
+            : '';
+
         if (recommendedConfig.methodUsed === 'A') {
           setStatusMessage({
-            type: 'success',
-            text: `Thành công [Cách A - Chính]: Tìm thấy khuôn mặt → Lần theo phông nền quanh đầu lấy mép trên & 2 mép bên → Nắn thẳng (${recommendedConfig.rotationDeg}°) → Cắt 3:4 từ mép trên (354×472 px @ 300 DPI).`,
+            type: recommendedConfig.needsReview ? 'warning' : 'success',
+            text: `Thành công [Cách A - Lần phông nền quanh đầu]: Lấy mép trên & 2 mép bên → Nắn thẳng (${recommendedConfig.rotationDeg}°) → Cắt 3:4 từ mép trên (354×472 px @ 300 DPI)${stampNote}.`,
           });
         } else if (recommendedConfig.methodUsed === 'B') {
           setStatusMessage({
-            type: 'info',
-            text: `Thành công [Cách B - Khối màu trên bàn]: Tìm tấm ảnh như khối khác màu mặt bàn → Nắn thẳng (${recommendedConfig.rotationDeg}°) → Cắt 3:4 (354×472 px @ 300 DPI).`,
+            type: recommendedConfig.needsReview ? 'warning' : 'info',
+            text: `Thành công [Cách B - Mép tờ giấy ảnh trên nền trơn]: Nắn thẳng (${recommendedConfig.rotationDeg}°), xoay đúng chiều & bỏ viền giấy → Cắt 3:4 (354×472 px @ 300 DPI)${stampNote}.`,
+          });
+        } else if (recommendedConfig.methodUsed === 'A2') {
+          setStatusMessage({
+            type: 'success',
+            text: `Thành công [Cách A2 - 3 đường thẳng quanh mặt]: Tìm mép trái, phải, trên cho ảnh phông trắng dán trên hồ sơ → Nắn thẳng (${recommendedConfig.rotationDeg}°)${stampNote}.`,
           });
         } else {
           setStatusMessage({
             type: 'warning',
-            text: `Đánh dấu [XEM - Cách C]: Cắt khung 3:4 quanh khuôn mặt, không nắn thẳng. Vui lòng kiểm tra lại khung cắt hoặc kéo 4 góc xanh nếu cần.`,
+            text: `Đánh dấu [XEM - Cách C]: Cắt khung 3:4 quanh khuôn mặt, không nắn thẳng${stampNote}. Vui lòng kiểm tra lại khung cắt hoặc kéo 4 góc xanh nếu cần.`,
           });
         }
       } finally {
@@ -315,31 +329,62 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
     setCropConfig(nextConfig);
   };
 
-  // Manually trigger Method A, Method B, or Method C
+  // Manually trigger Method A, Method B, Method A2, or Method C
   const handleForceMethod = (method: AutoCropMethod) => {
     if (!loadedImage) return;
     const face = detectedFaces[selectedFaceIndex] || null;
 
-    if (method === 'A' && detectedCardRect) {
-      const adjustedH =
-        Math.abs(currentAspectRatio - 3 / 4) < 0.01
-          ? detectedCardRect.height
-          : detectedCardRect.width / currentAspectRatio;
+    const applyCorners = (
+      corners: QuadCorners,
+      m: AutoCropMethod,
+      needsRev: boolean
+    ) => {
+      const [tl, tr, br, bl] = corners;
+      const width = Math.max(
+        Math.hypot(tr[0] - tl[0], tr[1] - tl[1]),
+        Math.hypot(br[0] - bl[0], br[1] - bl[1])
+      );
+      const height = Math.max(
+        Math.hypot(bl[0] - tl[0], bl[1] - tl[1]),
+        Math.hypot(br[0] - tr[0], br[1] - tr[1])
+      );
+      const cx = (tl[0] + tr[0] + br[0] + bl[0]) / 4;
+      const cy = (tl[1] + tr[1] + br[1] + bl[1]) / 4;
+      const angleDeg = Number(
+        ((-Math.atan2(tr[1] - tl[1], tr[0] - tl[0]) * 180) / Math.PI).toFixed(1)
+      );
       setCropConfig((prev) => ({
         ...prev,
-        centerX: detectedCardRect.x + detectedCardRect.width / 2,
-        centerY: detectedCardRect.y + adjustedH / 2,
-        baseCropHeight: Math.max(20, adjustedH),
+        centerX: cx,
+        centerY: cy,
+        baseCropHeight: Math.max(20, height),
         scale: 1,
-        rotationDeg: detectedCardRect.angleDeg || 0,
-        methodUsed: 'A',
-        needsReview: false,
+        rotationDeg: angleDeg,
+        methodUsed: m,
+        needsReview: needsRev,
+        quadCorners: corners,
+        aspectRatio: width > 0 && height > 0 ? currentAspectRatio : prev.aspectRatio,
       }));
-      return;
+    };
+
+    if (method === 'A' && face) {
+      const kqA = timKhungTheoPhong(loadedImage, face);
+      if (kqA) {
+        applyCorners(kqA.corners, 'A', kqA.doMau < 16.0);
+        return;
+      }
+    }
+
+    if (method === 'A2' && face) {
+      const kqA2 = timKhungTheoMep(loadedImage, face);
+      if (kqA2) {
+        applyCorners(kqA2.corners, 'A2', false);
+        return;
+      }
     }
 
     if (method === 'B') {
-      const blockB = tryMethodB_TableColorBlockDeskew(loadedImage);
+      const blockB = tryMethodB_TableColorBlockDeskew(loadedImage, face);
       if (blockB) {
         setCropConfig((prev) => ({
           ...prev,
@@ -350,6 +395,7 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
           rotationDeg: blockB.angleDeg,
           methodUsed: 'B',
           needsReview: false,
+          quadCorners: blockB.corners,
         }));
         return;
       }
@@ -363,12 +409,14 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
       currentAspectRatio,
       false
     );
-    setCropConfig({
+    setCropConfig((prev) => ({
       ...cfgC,
+      enhanceLevel: prev.enhanceLevel ?? 2,
+      removeRedStamp: prev.removeRedStamp ?? true,
       rotationDeg: 0,
       methodUsed: 'C',
       needsReview: true,
-    });
+    }));
   };
 
   // Handle adding files via File Input, Drag & Drop, or Clipboard Paste
@@ -476,6 +524,7 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
     if (activeDragType === 'pan') {
       setCropConfig((prev) => ({
         ...prev,
+        quadCorners: undefined,
         centerX: Math.max(
           0,
           Math.min(
@@ -505,6 +554,7 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
       const newEffectiveHeight = Math.min(loadedImage.naturalHeight, halfH * 2);
       setCropConfig((prev) => ({
         ...prev,
+        quadCorners: undefined,
         baseCropHeight: newEffectiveHeight,
         scale: 1,
       }));
@@ -533,6 +583,7 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
 
       setCropConfig((prev) => ({
         ...prev,
+        quadCorners: undefined,
         centerX: (x1 + x2) / 2,
         centerY: (y1 + y2) / 2,
         baseCropHeight: fittedH,
@@ -1205,7 +1256,7 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                 )}
               </div>
 
-              {/* Quick Pipeline Stage Switcher Bar under Canvas */}
+              {/* Quick Pipeline Stage Switcher Bar under Canvas (A -> B -> A2 -> C) */}
               <div className="mt-6 flex flex-wrap items-center justify-center gap-2 text-xs">
                 <span className="text-slate-300 text-[11px] flex items-center gap-1 mr-1">
                   <Move className="w-3.5 h-3.5 text-blue-400" />
@@ -1219,9 +1270,9 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                       ? 'bg-emerald-600 text-white shadow-xs'
                       : 'bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700'
                   }`}
-                  title="Tìm khuôn mặt -> lần theo phông nền quanh đầu lấy mép trên & 2 mép bên -> nắn thẳng -> cắt 3:4 từ mép trên"
+                  title="A: Tìm khuôn mặt -> lần theo phông nền quanh đầu lấy mép trên & 2 mép bên -> nắn thẳng -> cắt 3:4 từ mép trên (Chỉ tin ngay khi phông có màu)"
                 >
-                  A. Lần Phông Quanh Đầu (Chính)
+                  A. Phông Có Màu
                 </button>
                 <button
                   type="button"
@@ -1231,9 +1282,21 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                       ? 'bg-blue-600 text-white shadow-xs'
                       : 'bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700'
                   }`}
-                  title="Tìm tấm ảnh như một khối khác màu mặt bàn -> nắn thẳng"
+                  title="B: Tìm tờ giấy ảnh theo đường mép trên nền trơn -> nắn thẳng, xoay đúng chiều -> bỏ viền giấy"
                 >
-                  B. Khối Màu Khác Mặt Bàn (Nghiêng)
+                  B. Mép Tờ Ảnh (Phông Trắng/Nghiêng)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleForceMethod('A2')}
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded-lg cursor-pointer transition-colors ${
+                    cropConfig.methodUsed === 'A2'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700'
+                  }`}
+                  title="A2: Tìm 3 đường thẳng dài (mép trái, phải, trên) quanh khuôn mặt. Dùng cho ảnh phông trắng dán trên hồ sơ có chữ & dấu đỏ"
+                >
+                  A2. Ba Mép Thẳng Hồ Sơ
                 </button>
                 <button
                   type="button"
@@ -1243,7 +1306,7 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                       ? 'bg-amber-500 text-slate-950 shadow-xs'
                       : 'bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700'
                   }`}
-                  title="Cắt khung 3:4 quanh khuôn mặt, không nắn (đánh dấu XEM)"
+                  title="C: Cắt khung 3:4 quanh khuôn mặt, không nắn (đánh dấu XEM)"
                 >
                   C. Cắt 3:4 Quanh Mặt (XEM)
                 </button>
@@ -1355,7 +1418,11 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                     <button
                       type="button"
                       onClick={() =>
-                        setCropConfig((p) => ({ ...p, rotationDeg: 0 }))
+                        setCropConfig((p) => ({
+                          ...p,
+                          quadCorners: undefined,
+                          rotationDeg: 0,
+                        }))
                       }
                       className="text-[11px] text-blue-700 hover:underline cursor-pointer"
                     >
@@ -1371,6 +1438,7 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                     onChange={(e) =>
                       setCropConfig((p) => ({
                         ...p,
+                        quadCorners: undefined,
                         rotationDeg: Number(e.target.value),
                       }))
                     }
@@ -1378,57 +1446,45 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="font-semibold text-slate-700 flex items-center gap-1">
-                        <Sun className="w-3 h-3 text-amber-500" />
-                        Độ sáng
-                      </span>
-                      <span className="font-mono-num text-[11px]">
-                        {cropConfig.brightness}%
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min={75}
-                      max={135}
-                      step={1}
-                      value={cropConfig.brightness}
-                      onChange={(e) =>
-                        setCropConfig((p) => ({
-                          ...p,
-                          brightness: Number(e.target.value),
-                        }))
-                      }
-                      className="w-full accent-blue-700"
-                    />
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="font-semibold text-slate-700 flex items-center gap-1">
-                        <Contrast className="w-3 h-3 text-blue-600" />
-                        Tương phản
-                      </span>
-                      <span className="font-mono-num text-[11px]">
-                        {cropConfig.contrast}%
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min={80}
-                      max={135}
-                      step={1}
-                      value={cropConfig.contrast}
-                      onChange={(e) =>
-                        setCropConfig((p) => ({
-                          ...p,
-                          contrast: Number(e.target.value),
-                        }))
-                      }
-                      className="w-full accent-blue-700"
-                    />
+                {/* Enhance level (--muc 0..3 from anh_the.py) */}
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Chỉnh đẹp &amp; cân màu theo giấy trắng (--muc 0..3):
+                  </label>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {(
+                      [
+                        { lvl: 0, label: 'Mức 0 (Gốc)' },
+                        { lvl: 1, label: 'Mức 1 (Nhẹ)' },
+                        { lvl: 2, label: 'Mức 2 (Chuẩn)' },
+                        { lvl: 3, label: 'Mức 3 (Mạnh)' },
+                      ] as const
+                    ).map(({ lvl, label }) => {
+                      const activeLvl =
+                        cropConfig.sharpen === false
+                          ? 0
+                          : (cropConfig.enhanceLevel ?? 2);
+                      return (
+                        <button
+                          key={lvl}
+                          type="button"
+                          onClick={() =>
+                            setCropConfig((p) => ({
+                              ...p,
+                              sharpen: lvl > 0,
+                              enhanceLevel: lvl,
+                            }))
+                          }
+                          className={`py-1 px-1.5 rounded-lg font-bold border text-[11px] cursor-pointer transition-colors ${
+                            activeLvl === lvl
+                              ? 'bg-emerald-600 text-white border-emerald-600'
+                              : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -1436,16 +1492,22 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                   <button
                     type="button"
                     onClick={() =>
-                      setCropConfig((p) => ({ ...p, sharpen: !p.sharpen }))
+                      setCropConfig((p) => ({
+                        ...p,
+                        removeRedStamp: !(p.removeRedStamp ?? true),
+                      }))
                     }
                     className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border font-semibold cursor-pointer ${
-                      cropConfig.sharpen
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      (cropConfig.removeRedStamp ?? true)
+                        ? 'bg-rose-50 text-rose-700 border-rose-200'
                         : 'bg-white text-slate-700 border-slate-300'
                     }`}
+                    title="Tự động xóa dấu đỏ đóng đè lên ảnh thẻ (tắt tương đương --giu-dau)"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
-                    Tăng nét nhẹ
+                    {(cropConfig.removeRedStamp ?? true)
+                      ? 'Xóa dấu đỏ: BẬT'
+                      : 'Giữ dấu đỏ (--giu-dau)'}
                   </button>
 
                   <button
@@ -1554,17 +1616,22 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                       Phương pháp:{' '}
                       <strong className="text-slate-900">
                         {cropConfig.methodUsed === 'A'
-                          ? 'Cách A (Lần phông nền quanh đầu)'
+                          ? 'Cách A (Lần phông nền có màu quanh đầu)'
                           : cropConfig.methodUsed === 'B'
-                            ? 'Cách B (Tách khối màu trên bàn)'
-                            : 'Cách C (Khung 3:4 quanh mặt [XEM])'}
+                            ? 'Cách B (Mép tờ giấy ảnh trên nền trơn)'
+                            : cropConfig.methodUsed === 'A2'
+                              ? 'Cách A2 (3 đường thẳng quanh mặt trên hồ sơ)'
+                              : 'Cách C (Khung 3:4 quanh mặt [XEM])'}
                       </strong>
                     </li>
                     <li className="flex items-center gap-1.5">
                       <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                       Xử lý hậu kỳ:{' '}
                       <strong className="text-slate-900">
-                        {cropConfig.sharpen ? 'Đã tăng nét nhẹ (Unsharp Mask)' : 'Gốc'}
+                        {cropConfig.sharpen === false ||
+                        cropConfig.enhanceLevel === 0
+                          ? 'Mức 0 (Giữ nguyên)'
+                          : `Chỉnh đẹp Mức ${cropConfig.enhanceLevel ?? 2} (Cân màu giấy trắng, khử nhiễu, tăng nét)`}
                       </strong>
                     </li>
                   </ul>
