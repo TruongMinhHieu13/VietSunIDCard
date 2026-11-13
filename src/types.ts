@@ -110,6 +110,7 @@ export interface AppSettings {
 export type ActiveTab =
   | 'dashboard'
   | 'employees'
+  | 'face_crop'
   | 'designer'
   | 'print'
   | 'history'

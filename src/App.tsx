@@ -9,7 +9,7 @@ import {
   collection,
   query,
   where,
-  onSnapshot,
+  getDocs,
   doc,
   setDoc,
   updateDoc,
@@ -25,6 +25,7 @@ import {
   History,
   Settings,
   FileSpreadsheet,
+  ScanFace,
 } from 'lucide-react';
 import {
   db,
@@ -53,6 +54,7 @@ import {
   ExcelImportModal,
   ParsedExcelRow,
 } from './components/ExcelImportModal';
+import { FaceCropStudioView } from './components/FaceCropStudioView';
 import { triggerBrowserCtrlP } from './utils/nativePrint';
 
 const WORKSPACE_ID = 'vietsun_workspace';
@@ -94,140 +96,133 @@ export default function App() {
     triggerBrowserCtrlP();
   };
 
-  // Real-time Firestore Listeners for WORKSPACE_ID ('vietsun_workspace')
-  useEffect(() => {
-    // 1. Employees Listener
-    const empQ = query(
-      collection(db, 'employees'),
-      where('ownerId', '==', WORKSPACE_ID)
-    );
-    const unsubEmp = onSnapshot(
-      empQ,
-      (snap) => {
-        const list: Employee[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<Employee, 'id'>),
-        }));
-        list.sort((a, b) =>
-          a.msnv.localeCompare(b.msnv, undefined, { numeric: true })
-        );
-        setEmployees(list);
-      },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'employees')
-    );
+  // Load workspace data once from Firestore using getDocs (no continuous realtime connection)
+  const loadWorkspaceData = async () => {
+    try {
+      const [empSnap, tplSnap, impSnap, prtSnap, setSnap] = await Promise.all([
+        getDocs(
+          query(
+            collection(db, 'employees'),
+            where('ownerId', '==', WORKSPACE_ID)
+          )
+        ),
+        getDocs(
+          query(
+            collection(db, 'templates'),
+            where('ownerId', '==', WORKSPACE_ID)
+          )
+        ),
+        getDocs(
+          query(
+            collection(db, 'import_logs'),
+            where('ownerId', '==', WORKSPACE_ID)
+          )
+        ),
+        getDocs(
+          query(
+            collection(db, 'print_logs'),
+            where('ownerId', '==', WORKSPACE_ID)
+          )
+        ),
+        getDocs(
+          query(
+            collection(db, 'settings'),
+            where('ownerId', '==', WORKSPACE_ID)
+          )
+        ),
+      ]);
 
-    // 2. Templates Listener
-    const tplQ = query(
-      collection(db, 'templates'),
-      where('ownerId', '==', WORKSPACE_ID)
-    );
-    const unsubTpl = onSnapshot(
-      tplQ,
-      async (snap) => {
-        if (snap.empty && !hasBootstrappedRef.current) {
-          hasBootstrappedRef.current = true;
-          await bootstrapInitialWorkspace();
-          return;
-        }
-        const list: CardTemplate[] = snap.docs.map((d) => {
-          const data = d.data() as Omit<CardTemplate, 'id'>;
-          const normalizedPhotoBg =
-            !data.photoBgColor ||
-            data.photoBgColor === '#1d4ed8' ||
-            data.photoBgColor === '#2563eb'
-              ? '#ffffff'
-              : data.photoBgColor;
-          return {
-            id: d.id,
-            ...data,
-            logoUrl: data.logoUrl || OFFICIAL_VIETSUN_LOGO,
-            photoBgColor: normalizedPhotoBg,
-          };
+      if (tplSnap.empty && !hasBootstrappedRef.current) {
+        hasBootstrappedRef.current = true;
+        await bootstrapInitialWorkspace();
+        return;
+      }
+
+      // 1. Employees
+      const empList: Employee[] = empSnap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<Employee, 'id'>),
+      }));
+      empList.sort((a, b) =>
+        a.msnv.localeCompare(b.msnv, undefined, { numeric: true })
+      );
+      setEmployees(empList);
+
+      // 2. Templates
+      const tplList: CardTemplate[] = tplSnap.docs.map((d) => {
+        const data = d.data() as Omit<CardTemplate, 'id'>;
+        const normalizedPhotoBg =
+          !data.photoBgColor ||
+          data.photoBgColor === '#1d4ed8' ||
+          data.photoBgColor === '#2563eb'
+            ? '#ffffff'
+            : data.photoBgColor;
+        return {
+          id: d.id,
+          ...data,
+          logoUrl: data.logoUrl || OFFICIAL_VIETSUN_LOGO,
+          photoBgColor: normalizedPhotoBg,
+        };
+      });
+      setTemplates(tplList);
+      if (tplList.length > 0) {
+        setSelectedTemplateId((prev) => {
+          if (prev && tplList.some((t) => t.id === prev)) return prev;
+          const def = tplList.find((t) => t.isDefault) || tplList[0];
+          return def.id;
         });
-        setTemplates(list);
-        if (list.length > 0) {
-          setSelectedTemplateId((prev) => {
-            if (prev && list.some((t) => t.id === prev)) return prev;
-            const def = list.find((t) => t.isDefault) || list[0];
-            return def.id;
-          });
-        }
-      },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'templates')
-    );
+      }
 
-    // 3. Import Logs Listener
-    const impQ = query(
-      collection(db, 'import_logs'),
-      where('ownerId', '==', WORKSPACE_ID)
-    );
-    const unsubImp = onSnapshot(
-      impQ,
-      (snap) => {
-        const list: ImportHistory[] = snap.docs.map((d) => ({
+      // 3. Import Logs
+      const impList: ImportHistory[] = impSnap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<ImportHistory, 'id'>),
+      }));
+      setImportLogs(impList);
+
+      // 4. Print Logs
+      const prtList: PrintHistory[] = prtSnap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<PrintHistory, 'id'>),
+      }));
+      setPrintLogs(prtList);
+
+      // 5. Settings
+      if (!setSnap.empty) {
+        const d = setSnap.docs[0];
+        const data = d.data() as Omit<AppSettings, 'id'>;
+        setSettings({
           id: d.id,
-          ...(d.data() as Omit<ImportHistory, 'id'>),
-        }));
-        setImportLogs(list);
-      },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'import_logs')
-    );
+          ...data,
+          logoUrl: data.logoUrl || OFFICIAL_VIETSUN_LOGO,
+        });
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, 'workspace');
+    }
+  };
 
-    // 4. Print Logs Listener
-    const prtQ = query(
-      collection(db, 'print_logs'),
-      where('ownerId', '==', WORKSPACE_ID)
-    );
-    const unsubPrt = onSnapshot(
-      prtQ,
-      (snap) => {
-        const list: PrintHistory[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<PrintHistory, 'id'>),
-        }));
-        setPrintLogs(list);
-      },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'print_logs')
-    );
-
-    // 5. Settings Listener
-    const setQ = query(
-      collection(db, 'settings'),
-      where('ownerId', '==', WORKSPACE_ID)
-    );
-    const unsubSet = onSnapshot(
-      setQ,
-      (snap) => {
-        if (!snap.empty) {
-          const d = snap.docs[0];
-          const data = d.data() as Omit<AppSettings, 'id'>;
-          setSettings({
-            id: d.id,
-            ...data,
-            logoUrl: data.logoUrl || OFFICIAL_VIETSUN_LOGO,
-          });
-        }
-      },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'settings')
-    );
-
-    return () => {
-      unsubEmp();
-      unsubTpl();
-      unsubImp();
-      unsubPrt();
-      unsubSet();
-    };
+  useEffect(() => {
+    void loadWorkspaceData();
   }, []);
 
   // Bootstrap default templates, settings, and sample VietSun employees on first run
   const bootstrapInitialWorkspace = async () => {
     try {
       const batch = writeBatch(db);
+      const seededTemplates: CardTemplate[] = [];
+      const seededEmployees: Employee[] = [];
 
       // 1. Seed 3 Default Card Templates with official VietSun logo
       DEFAULT_CARD_TEMPLATES.forEach((tpl, idx) => {
         const tplId = `tpl_vietsun_${idx + 1}`;
+        const tplRecord: CardTemplate = {
+          id: tplId,
+          ...tpl,
+          logoUrl: OFFICIAL_VIETSUN_LOGO,
+          ownerId: WORKSPACE_ID,
+        };
+        seededTemplates.push(tplRecord);
         batch.set(doc(db, 'templates', tplId), {
           ...tpl,
           logoUrl: OFFICIAL_VIETSUN_LOGO,
@@ -239,7 +234,8 @@ export default function App() {
 
       // 2. Seed Default Settings
       const settingId = 'settings_vietsun_main';
-      batch.set(doc(db, 'settings', settingId), {
+      const defaultSettings: AppSettings = {
+        id: settingId,
         companyName: 'CHI NHÁNH CÔNG TY CỔ PHẦN',
         companyBranch: 'VIETSUN ĐỒNG NAI',
         companySubName: 'ĐẦU TƯ MẶT TRỜI VIỆT',
@@ -252,6 +248,20 @@ export default function App() {
         cardWidthMm: 85.6,
         cardHeightMm: 54,
         ownerId: WORKSPACE_ID,
+      };
+      batch.set(doc(db, 'settings', settingId), {
+        companyName: defaultSettings.companyName,
+        companyBranch: defaultSettings.companyBranch,
+        companySubName: defaultSettings.companySubName,
+        logoUrl: defaultSettings.logoUrl,
+        defaultPaperSize: defaultSettings.defaultPaperSize,
+        defaultCols: defaultSettings.defaultCols,
+        defaultRows: defaultSettings.defaultRows,
+        defaultGapMm: defaultSettings.defaultGapMm,
+        defaultMarginMm: defaultSettings.defaultMarginMm,
+        cardWidthMm: defaultSettings.cardWidthMm,
+        cardHeightMm: defaultSettings.cardHeightMm,
+        ownerId: WORKSPACE_ID,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -259,6 +269,11 @@ export default function App() {
       // 3. Seed Sample Employees (including Trương Minh Hiếu - 90993)
       SAMPLE_EMPLOYEES_SEED.forEach((emp, idx) => {
         const empId = `emp_vietsun_${idx + 1}`;
+        seededEmployees.push({
+          id: empId,
+          ...emp,
+          ownerId: WORKSPACE_ID,
+        });
         batch.set(doc(db, 'employees', empId), {
           ...emp,
           ownerId: WORKSPACE_ID,
@@ -268,6 +283,18 @@ export default function App() {
       });
 
       await batch.commit();
+
+      setTemplates(seededTemplates);
+      if (seededTemplates.length > 0) {
+        const def =
+          seededTemplates.find((t) => t.isDefault) || seededTemplates[0];
+        setSelectedTemplateId(def.id);
+      }
+      setSettings(defaultSettings);
+      seededEmployees.sort((a, b) =>
+        a.msnv.localeCompare(b.msnv, undefined, { numeric: true })
+      );
+      setEmployees(seededEmployees);
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'bootstrap');
     }
@@ -279,9 +306,15 @@ export default function App() {
       const existingMsnv = new Set(
         employees.map((e) => e.msnv.trim().toLowerCase())
       );
+      const addedList: Employee[] = [];
       SAMPLE_EMPLOYEES_SEED.forEach((emp) => {
         if (!existingMsnv.has(emp.msnv.toLowerCase())) {
           const id = generateSafeId('emp');
+          addedList.push({
+            id,
+            ...emp,
+            ownerId: WORKSPACE_ID,
+          });
           batch.set(doc(db, 'employees', id), {
             ...emp,
             ownerId: WORKSPACE_ID,
@@ -290,7 +323,16 @@ export default function App() {
           });
         }
       });
-      await batch.commit();
+      if (addedList.length > 0) {
+        setEmployees((prev) => {
+          const next = [...prev, ...addedList];
+          next.sort((a, b) =>
+            a.msnv.localeCompare(b.msnv, undefined, { numeric: true })
+          );
+          return next;
+        });
+        await batch.commit();
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'employees');
     }
@@ -354,13 +396,25 @@ export default function App() {
       photoUrl: string;
     }
   ) => {
+    const updatedFields = {
+      msnv: data.msnv.slice(0, 50),
+      fullName: data.fullName.slice(0, 120),
+      department: data.department.slice(0, 120),
+      joinDate: data.joinDate.slice(0, 30),
+      photoUrl: data.photoUrl.slice(0, 500000),
+    };
+    setEmployees((prev) => {
+      const next = prev.map((emp) =>
+        emp.id === id ? { ...emp, ...updatedFields } : emp
+      );
+      next.sort((a, b) =>
+        a.msnv.localeCompare(b.msnv, undefined, { numeric: true })
+      );
+      return next;
+    });
     try {
       await updateDoc(doc(db, 'employees', id), {
-        msnv: data.msnv.slice(0, 50),
-        fullName: data.fullName.slice(0, 120),
-        department: data.department.slice(0, 120),
-        joinDate: data.joinDate.slice(0, 30),
-        photoUrl: data.photoUrl.slice(0, 500000),
+        ...updatedFields,
         updatedAt: serverTimestamp(),
       });
     } catch (err) {
@@ -369,13 +423,14 @@ export default function App() {
   };
 
   const handleDeleteEmployee = async (id: string) => {
+    setEmployees((prev) => prev.filter((emp) => emp.id !== id));
+    setSelectedEmployeeIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
     try {
       await deleteDoc(doc(db, 'employees', id));
-      setSelectedEmployeeIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `employees/${id}`);
     }
@@ -383,13 +438,15 @@ export default function App() {
 
   const handleBatchDeleteEmployees = async (ids: string[]) => {
     if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    setEmployees((prev) => prev.filter((emp) => !idSet.has(emp.id)));
+    setSelectedEmployeeIds(new Set());
     try {
       const batch = writeBatch(db);
       ids.forEach((id) => {
         batch.delete(doc(db, 'employees', id));
       });
       await batch.commit();
-      setSelectedEmployeeIds(new Set());
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, 'employees');
     }
@@ -422,7 +479,22 @@ export default function App() {
       };
     });
 
-    // Immediately update local employees & selectedEmployeeIds state so UI reflects imported rows right away
+    const logId = generateSafeId('imp');
+    const newImportLog: ImportHistory = {
+      id: logId,
+      fileName: (fileName || 'DanhSach.xlsx').slice(0, 200),
+      importMode,
+      totalRows: stats.totalRows,
+      validCount: stats.validCount,
+      errorCount: stats.errorCount,
+      importedCount: stats.importedCount,
+      updatedCount: stats.updatedCount,
+      summaryNote: `Thêm mới ${stats.importedCount} NV, cập nhật ${stats.updatedCount} NV, bỏ qua ${stats.errorCount} dòng lỗi`,
+      ownerId: WORKSPACE_ID,
+      createdAt: new Date().toISOString(),
+    };
+
+    // Immediately update local employees, importLogs & selectedEmployeeIds state so UI reflects imported rows right away
     if (importedIds.length > 0) {
       flushSync(() => {
         setEmployees((prev) => {
@@ -445,6 +517,7 @@ export default function App() {
             a.msnv.localeCompare(b.msnv, undefined, { numeric: true })
           );
         });
+        setImportLogs((prev) => [newImportLog, ...prev]);
         setSelectedEmployeeIds(new Set(importedIds));
         if (triggerPrintImmediately) {
           setIsImportModalOpen(false);
@@ -495,16 +568,15 @@ export default function App() {
       }
 
       // Record Import History Log
-      const logId = generateSafeId('imp');
       await setDoc(doc(db, 'import_logs', logId), {
-        fileName: (fileName || 'DanhSach.xlsx').slice(0, 200),
-        importMode,
-        totalRows: stats.totalRows,
-        validCount: stats.validCount,
-        errorCount: stats.errorCount,
-        importedCount: stats.importedCount,
-        updatedCount: stats.updatedCount,
-        summaryNote: `Thêm mới ${stats.importedCount} NV, cập nhật ${stats.updatedCount} NV, bỏ qua ${stats.errorCount} dòng lỗi`,
+        fileName: newImportLog.fileName,
+        importMode: newImportLog.importMode,
+        totalRows: newImportLog.totalRows,
+        validCount: newImportLog.validCount,
+        errorCount: newImportLog.errorCount,
+        importedCount: newImportLog.importedCount,
+        updatedCount: newImportLog.updatedCount,
+        summaryNote: newImportLog.summaryNote,
         ownerId: WORKSPACE_ID,
         createdAt: serverTimestamp(),
       });
@@ -517,7 +589,8 @@ export default function App() {
   // Template Save / Delete Handlers
   const handleSaveTemplate = async (template: CardTemplate, asNew: boolean) => {
     const id = asNew ? generateSafeId('tpl') : template.id;
-    const payload = {
+    const cleanTemplate: CardTemplate = {
+      id,
       name: template.name.slice(0, 100),
       layoutStyle: template.layoutStyle,
       orientation: template.orientation,
@@ -556,8 +629,22 @@ export default function App() {
       showQrOnBack: Boolean(template.showQrOnBack),
       isDefault: Boolean(template.isDefault),
       ownerId: WORKSPACE_ID,
+    };
+
+    const { id: _id, ...payloadBase } = cleanTemplate;
+    const payload = {
+      ...payloadBase,
       updatedAt: serverTimestamp(),
     };
+
+    if (asNew) {
+      setTemplates((prev) => [...prev, cleanTemplate]);
+      setSelectedTemplateId(id);
+    } else {
+      setTemplates((prev) =>
+        prev.map((t) => (t.id === id ? cleanTemplate : t))
+      );
+    }
 
     try {
       if (asNew) {
@@ -565,7 +652,6 @@ export default function App() {
           ...payload,
           createdAt: serverTimestamp(),
         });
-        setSelectedTemplateId(id);
       } else {
         const { ownerId: _o, ...updateFields } = payload;
         await updateDoc(doc(db, 'templates', id), updateFields);
@@ -577,6 +663,13 @@ export default function App() {
 
   const handleDeleteTemplate = async (templateId: string) => {
     if (templates.length <= 1) return;
+    setTemplates((prev) => {
+      const remaining = prev.filter((t) => t.id !== templateId);
+      if (selectedTemplateId === templateId && remaining.length > 0) {
+        setSelectedTemplateId(remaining[0].id);
+      }
+      return remaining;
+    });
     try {
       await deleteDoc(doc(db, 'templates', templateId));
     } catch (err) {
@@ -598,8 +691,42 @@ export default function App() {
     duplex: boolean
   ) => {
     if (printedEmployees.length === 0) return;
+    const todayStr = new Date().toLocaleDateString('vi-VN');
+    const summary = printedEmployees
+      .map((e) => `${e.msnv} - ${e.fullName}`)
+      .join(', ')
+      .slice(0, 1950);
+    const logId = generateSafeId('prt');
+    const printedIdSet = new Set(printedEmployees.map((e) => e.id));
+
+    setEmployees((prev) =>
+      prev.map((emp) =>
+        printedIdSet.has(emp.id)
+          ? {
+              ...emp,
+              printCount: (emp.printCount || 0) + 1,
+              lastPrintedAt: todayStr,
+            }
+          : emp
+      )
+    );
+    setPrintLogs((prev) => [
+      {
+        id: logId,
+        printMode,
+        templateName: templateName.slice(0, 100),
+        totalCards: printedEmployees.length,
+        totalPages: Math.max(1, totalPages),
+        paperSize: paperSize.slice(0, 30),
+        duplex: Boolean(duplex),
+        employeeSummary: summary,
+        ownerId: WORKSPACE_ID,
+        createdAt: new Date().toISOString(),
+      },
+      ...prev,
+    ]);
+
     try {
-      const todayStr = new Date().toLocaleDateString('vi-VN');
       const batch = writeBatch(db);
 
       printedEmployees.slice(0, 400).forEach((emp) => {
@@ -610,12 +737,6 @@ export default function App() {
         });
       });
 
-      const summary = printedEmployees
-        .map((e) => `${e.msnv} - ${e.fullName}`)
-        .join(', ')
-        .slice(0, 1950);
-
-      const logId = generateSafeId('prt');
       batch.set(doc(db, 'print_logs', logId), {
         printMode,
         templateName: templateName.slice(0, 100),
@@ -640,22 +761,28 @@ export default function App() {
       updated.id && updated.id !== 'default-settings'
         ? updated.id
         : 'settings_vietsun_main';
+    const nextSettings: AppSettings = {
+      id: docId,
+      companyName: updated.companyName.slice(0, 150),
+      companyBranch: updated.companyBranch.slice(0, 150),
+      companySubName: updated.companySubName.slice(0, 150),
+      logoUrl: (updated.logoUrl || OFFICIAL_VIETSUN_LOGO).slice(0, 300000),
+      defaultPaperSize: updated.defaultPaperSize,
+      defaultCols: Number(updated.defaultCols),
+      defaultRows: Number(updated.defaultRows),
+      defaultGapMm: Number(updated.defaultGapMm),
+      defaultMarginMm: Number(updated.defaultMarginMm),
+      cardWidthMm: Number(updated.cardWidthMm),
+      cardHeightMm: Number(updated.cardHeightMm),
+      ownerId: WORKSPACE_ID,
+    };
+    setSettings(nextSettings);
     try {
+      const { id: _id, ...settingsFields } = nextSettings;
       await setDoc(
         doc(db, 'settings', docId),
         {
-          companyName: updated.companyName.slice(0, 150),
-          companyBranch: updated.companyBranch.slice(0, 150),
-          companySubName: updated.companySubName.slice(0, 150),
-          logoUrl: (updated.logoUrl || OFFICIAL_VIETSUN_LOGO).slice(0, 300000),
-          defaultPaperSize: updated.defaultPaperSize,
-          defaultCols: Number(updated.defaultCols),
-          defaultRows: Number(updated.defaultRows),
-          defaultGapMm: Number(updated.defaultGapMm),
-          defaultMarginMm: Number(updated.defaultMarginMm),
-          cardWidthMm: Number(updated.cardWidthMm),
-          cardHeightMm: Number(updated.cardHeightMm),
-          ownerId: WORKSPACE_ID,
+          ...settingsFields,
           updatedAt: serverTimestamp(),
         },
         { merge: true }
@@ -742,6 +869,19 @@ export default function App() {
             >
               <Users className="w-3.5 h-3.5" />
               Quản lý nhân viên ({employees.length})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('face_crop')}
+              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
+                activeTab === 'face_crop'
+                  ? 'bg-blue-700 text-white shadow-xs'
+                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              }`}
+            >
+              <ScanFace className="w-3.5 h-3.5" />
+              Cắt ảnh 3×4 AI
             </button>
 
             <button
@@ -852,6 +992,23 @@ export default function App() {
             onGoToBatchPrint={() => setActiveTab('print')}
             onOpenPrintDialog={handleOpenPrintDialog}
             onSeedSampleEmployees={handleSeedSampleEmployees}
+          />
+        )}
+
+        {activeTab === 'face_crop' && (
+          <FaceCropStudioView
+            employees={employees}
+            selectedTemplate={activeTemplate}
+            onUpdateEmployeePhoto={(emp, photoUrl) =>
+              handleUpdateEmployee(emp.id, {
+                msnv: emp.msnv,
+                fullName: emp.fullName,
+                department: emp.department,
+                joinDate: emp.joinDate,
+                photoUrl,
+              })
+            }
+            onOpenPrintDialog={handleOpenPrintDialog}
           />
         )}
 

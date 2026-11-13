@@ -18,6 +18,7 @@ import {
   Camera,
   UserPlus,
   AlertCircle,
+  ScanFace,
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
@@ -28,6 +29,7 @@ import {
   parseDateToUtcTimestamp,
   compressImageTo3x4DataUrl,
 } from './EmployeeManagementView';
+import { FaceCropModal } from './FaceCropStudioView';
 
 const PRINT_CONFIG_STORAGE_KEY = 'vietsun_print_config_default_v2';
 
@@ -183,6 +185,10 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
   const [uploadingPhotoEmpId, setUploadingPhotoEmpId] = useState<string | null>(
     null
   );
+  const [faceCropEmployee, setFaceCropEmployee] = useState<Employee | null>(
+    null
+  );
+  const [isFaceCropModalOpen, setIsFaceCropModalOpen] = useState(false);
 
   const sheetRefs = useRef<Array<HTMLDivElement | null>>([]);
   const hasAutoSelectedRef = useRef(false);
@@ -1058,32 +1064,19 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <label
-                        onClick={(e) => e.stopPropagation()}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFaceCropEmployee(emp);
+                          setIsFaceCropModalOpen(true);
+                        }}
                         className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-blue-700 bg-white border border-blue-200 hover:bg-blue-50 rounded cursor-pointer"
-                        title={`Tải hình 3×4 cho ${emp.fullName}`}
+                        title={`Mở công cụ AI cắt ảnh 3×4 cho ${emp.fullName}`}
                       >
-                        <Camera className="w-3 h-3" />
-                        <span>{emp.photoUrl ? 'Đổi 3×4' : 'Ảnh 3×4'}</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0];
-                            if (!file) return;
-                            setUploadingPhotoEmpId(emp.id);
-                            try {
-                              const compressed =
-                                await compressImageTo3x4DataUrl(file);
-                              await onUpdateEmployeePhoto(emp, compressed);
-                            } finally {
-                              setUploadingPhotoEmpId(null);
-                              e.target.value = '';
-                            }
-                          }}
-                          className="hidden"
-                        />
-                      </label>
+                        <ScanFace className="w-3 h-3" />
+                        <span>Cắt 3×4 AI</span>
+                      </button>
                       <button
                         type="button"
                         onClick={(e) => {
@@ -1575,6 +1568,25 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
             )}
           </div>
         ))}
+      </div>
+
+      {/* AI Face Detection & 3x4 Photo Cropper Modal */}
+      <div className="no-print">
+        <FaceCropModal
+          isOpen={isFaceCropModalOpen}
+          onClose={() => setIsFaceCropModalOpen(false)}
+          employees={employees}
+          selectedTemplate={selectedTemplate}
+          targetEmployee={faceCropEmployee}
+          onUpdateEmployeePhoto={async (emp, newPhotoUrl) => {
+            await onUpdateEmployeePhoto(emp, newPhotoUrl);
+            setStatusBanner(
+              `Đã cắt AI và cập nhật ảnh 3×4 cho nhân viên ${emp.fullName} (MSNV: ${emp.msnv})!`
+            );
+            setTimeout(() => setStatusBanner(null), 4000);
+          }}
+          onOpenPrintDialog={onOpenPrintDialog}
+        />
       </div>
     </div>
   );

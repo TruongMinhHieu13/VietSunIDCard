@@ -17,6 +17,7 @@ import {
   Calendar,
   Camera,
   CheckCircle2,
+  ScanFace,
 } from 'lucide-react';
 import { CardTemplate, Employee } from '../types';
 import { IdCardPreview } from './IdCardPreview';
@@ -24,40 +25,12 @@ import {
   downloadSampleExcelTemplate,
   exportEmployeesToExcel,
 } from './ExcelImportModal';
+import { autoCropFileWithFaceAI } from '../utils/faceDetectionCrop';
+import { FaceCropModal } from './FaceCropStudioView';
 
-export function compressImageTo3x4DataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Không thể đọc file ảnh'));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error('Định dạng ảnh không hợp lệ'));
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        // Exact 25mm x 35mm portrait ratio (5:7)
-        const targetW = 250;
-        const targetH = 350;
-        canvas.width = targetW;
-        canvas.height = targetH;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Không thể xử lý khung ảnh 25x35mm'));
-          return;
-        }
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, targetW, targetH);
-        const scale = Math.max(targetW / img.width, targetH / img.height);
-        const drawW = img.width * scale;
-        const drawH = img.height * scale;
-        const dx = (targetW - drawW) / 2;
-        const dy = (targetH - drawH) / 2;
-        ctx.drawImage(img, dx, dy, drawW, drawH);
-        resolve(canvas.toDataURL('image/jpeg', 0.88));
-      };
-      img.src = String(reader.result);
-    };
-    reader.readAsDataURL(file);
-  });
+export async function compressImageTo3x4DataUrl(file: File): Promise<string> {
+  const { dataUrl } = await autoCropFileWithFaceAI(file, 3 / 4, 354);
+  return dataUrl;
 }
 
 export function parseDateToUtcTimestamp(dateStr: string): number | null {
@@ -148,6 +121,10 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
 
   // Quick Card Preview Modal
   const [previewEmployee, setPreviewEmployee] = useState<Employee | null>(null);
+
+  // Interactive AI Face Cropper Modal State
+  const [faceCropEmployee, setFaceCropEmployee] = useState<Employee | null>(null);
+  const [isFaceCropModalOpen, setIsFaceCropModalOpen] = useState(false);
 
   // Delete Confirmation Modal
   const [deletingEmployee, setDeletingEmployee] = useState<Employee | null>(null);
@@ -431,14 +408,28 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
             IMPORT EXCEL
           </button>
 
+          {/* AI 3x4 FACE CROP TOOL BUTTON */}
+          <button
+            type="button"
+            onClick={() => {
+              setFaceCropEmployee(employees[0] || null);
+              setIsFaceCropModalOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-lg cursor-pointer transition-colors"
+            title="Mở công cụ AI nhận diện khuôn mặt và cắt ảnh 3×4 từ bất kỳ tấm ảnh nào"
+          >
+            <ScanFace className="w-4 h-4" />
+            Cắt Ảnh 3×4 Bằng AI
+          </button>
+
           {/* BULK 3x4 PHOTO UPLOAD BY MSNV / NAME */}
           {employees.length > 0 && (
             <label
               className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded-lg cursor-pointer transition-colors"
-              title="Chọn nhiều ảnh 3×4 cùng lúc (đặt tên file ảnh theo MSNV như 90993.jpg để tự động ghép)"
+              title="Chọn nhiều ảnh bất kỳ cùng lúc (AI tự nhận diện mặt cắt 3×4 và ghép theo tên file trùng MSNV)"
             >
               <Camera className="w-3.5 h-3.5" />
-              Tải Ảnh 3×4 Hàng Loạt
+              Tải Ảnh 3×4 Hàng Loạt (AI)
               <input
                 type="file"
                 accept="image/*"
@@ -776,21 +767,18 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
                       </td>
                       <td className="py-2.5 px-4 text-right">
                         <div className="inline-flex items-center gap-1">
-                          <label
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFaceCropEmployee(emp);
+                              setIsFaceCropModalOpen(true);
+                            }}
                             className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-lg cursor-pointer transition-colors"
-                            title={`Chọn hình 3×4 cho ${emp.fullName}`}
+                            title={`Mở công cụ AI cắt ảnh 3×4 từ ảnh bất kỳ cho ${emp.fullName}`}
                           >
-                            <Camera className="w-3.5 h-3.5" />
-                            <span>{emp.photoUrl ? 'Đổi 3×4' : 'Ảnh 3×4'}</span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              onChange={(e) =>
-                                handleDirectEmployeePhotoUpload(emp, e)
-                              }
-                              className="hidden"
-                            />
-                          </label>
+                            <ScanFace className="w-3.5 h-3.5" />
+                            <span>Cắt 3×4 AI</span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => {
@@ -1153,6 +1141,29 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal 5: AI Face Detection & 3x4 Photo Cropper */}
+      <FaceCropModal
+        isOpen={isFaceCropModalOpen}
+        onClose={() => setIsFaceCropModalOpen(false)}
+        employees={employees}
+        selectedTemplate={selectedTemplate}
+        targetEmployee={faceCropEmployee}
+        onUpdateEmployeePhoto={async (emp, newPhotoUrl) => {
+          await onUpdateEmployee(emp.id, {
+            msnv: emp.msnv,
+            fullName: emp.fullName,
+            department: emp.department,
+            joinDate: emp.joinDate,
+            photoUrl: newPhotoUrl,
+          });
+          setPhotoStatusBanner(
+            `Đã cắt AI và lưu hình 3×4 cho nhân viên ${emp.fullName} (MSNV: ${emp.msnv})!`
+          );
+          setTimeout(() => setPhotoStatusBanner(null), 4000);
+        }}
+        onOpenPrintDialog={onOpenPrintDialog}
+      />
     </div>
   );
 };
