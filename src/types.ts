@@ -248,8 +248,8 @@ export const SAMPLE_EMPLOYEES_SEED = [
     department: 'Bảo trì vận hành',
     joinDate: '02/10/2026',
     photoUrl: '',
-    printCount: 1,
-    lastPrintedAt: '11/11/2026',
+    printCount: 0,
+    lastPrintedAt: '',
   },
   {
     msnv: '90994',
@@ -266,8 +266,8 @@ export const SAMPLE_EMPLOYEES_SEED = [
     department: 'Kế toán - Tài chính',
     joinDate: '12/09/2026',
     photoUrl: '',
-    printCount: 1,
-    lastPrintedAt: '10/11/2026',
+    printCount: 0,
+    lastPrintedAt: '',
   },
   {
     msnv: '90996',
@@ -284,8 +284,8 @@ export const SAMPLE_EMPLOYEES_SEED = [
     department: 'Hành chính - Nhân sự',
     joinDate: '01/06/2026',
     photoUrl: '',
-    printCount: 2,
-    lastPrintedAt: '09/11/2026',
+    printCount: 0,
+    lastPrintedAt: '',
   },
   {
     msnv: '90998',

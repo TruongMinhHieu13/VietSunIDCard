@@ -35,7 +35,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     'printed_lookup'
   );
   const [lookupQuery, setLookupQuery] = useState('');
-  const [lookupStatus, setLookupStatus] = useState<'ALL' | 'PRINTED' | 'UNPRINTED'>('PRINTED');
+  const [lookupStatus, setLookupStatus] = useState<'ALL' | 'PRINTED' | 'UNPRINTED'>('ALL');
 
   const filteredLookupEmployees = useMemo(() => {
     return employees.filter((emp) => {
@@ -59,7 +59,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
       <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-base font-bold text-slate-900">
-            Lịch Sử Import Excel, Lịch Sử In Thẻ & Tra Cứu Nhân Viên Đã In
+            Lịch Sử Import Excel, Lịch Sử In Thẻ &amp; Tra Cứu Nhân Viên Đã In
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
             Theo dõi toàn bộ nhật ký nhập file Excel, các lệnh in hàng loạt và tra cứu trạng thái cấp thẻ từng nhân sự

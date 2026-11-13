@@ -135,6 +135,7 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
   >('ALL');
   const [joinDateFrom, setJoinDateFrom] = useState('');
   const [joinDateTo, setJoinDateTo] = useState('');
+  const [customSelectCount, setCustomSelectCount] = useState<string>('');
 
   // Quick Add Employee state right on the Print Page
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
@@ -904,7 +905,7 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
               )}
             </div>
 
-            {/* Quick Batch Selection Buttons (1, 10, 50, All) */}
+            {/* Quick Batch Selection Buttons (1, 10, 50, Custom Count, All) */}
             <div className="flex flex-wrap items-center gap-1.5 pt-1">
               <button
                 type="button"
@@ -922,28 +923,64 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => selectQuickCount(1)}
+                onClick={() => {
+                  setCustomSelectCount('1');
+                  selectQuickCount(1);
+                }}
                 className="px-2 py-1 text-[11px] font-mono-num font-medium text-slate-700 bg-white border border-slate-300 hover:bg-slate-100 rounded cursor-pointer"
               >
                 Chọn 1
               </button>
               <button
                 type="button"
-                onClick={() => selectQuickCount(10)}
+                onClick={() => {
+                  setCustomSelectCount('10');
+                  selectQuickCount(10);
+                }}
                 className="px-2 py-1 text-[11px] font-mono-num font-medium text-slate-700 bg-white border border-slate-300 hover:bg-slate-100 rounded cursor-pointer"
               >
                 Chọn 10
               </button>
               <button
                 type="button"
-                onClick={() => selectQuickCount(50)}
+                onClick={() => {
+                  setCustomSelectCount('50');
+                  selectQuickCount(50);
+                }}
                 className="px-2 py-1 text-[11px] font-mono-num font-medium text-slate-700 bg-white border border-slate-300 hover:bg-slate-100 rounded cursor-pointer"
               >
                 Chọn 50
               </button>
+              <div className="inline-flex items-center bg-white border border-slate-300 rounded overflow-hidden focus-within:border-blue-600">
+                <span className="pl-2 pr-1 text-[11px] text-slate-500 select-none">
+                  SL:
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  max={filteredEmployees.length}
+                  value={customSelectCount}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setCustomSelectCount(val);
+                    const num = parseInt(val, 10);
+                    if (!Number.isNaN(num) && num > 0) {
+                      selectQuickCount(num);
+                    } else if (val === '' || num === 0) {
+                      clearSelection();
+                    }
+                  }}
+                  placeholder="Nhập số..."
+                  className="w-16 px-1.5 py-1 text-[11px] font-mono-num font-semibold text-slate-900 focus:outline-none"
+                  title="Nhập số lượng nhân viên cần chọn theo danh sách lọc hiện tại"
+                />
+              </div>
               <button
                 type="button"
-                onClick={clearSelection}
+                onClick={() => {
+                  setCustomSelectCount('');
+                  clearSelection();
+                }}
                 className="px-2 py-1 text-[11px] font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded cursor-pointer ml-auto"
               >
                 Bỏ chọn

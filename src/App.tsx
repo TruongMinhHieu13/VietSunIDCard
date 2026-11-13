@@ -138,11 +138,62 @@ export default function App() {
         return;
       }
 
+      // One-time clean history reset requested by user ("Xóa sạch lịch sử đi. Giờ sẽ bắt đầu lại")
+      const shouldWipeHistoryOnce =
+        typeof window !== 'undefined' &&
+        localStorage.getItem('vietsun_history_wipe_clean_v1') !== 'done';
+
+      if (shouldWipeHistoryOnce) {
+        localStorage.setItem('vietsun_history_wipe_clean_v1', 'done');
+        const wipeBatch = writeBatch(db);
+        let opsCount = 0;
+
+        impSnap.docs.forEach((d) => {
+          if (opsCount < 450) {
+            wipeBatch.delete(doc(db, 'import_logs', d.id));
+            opsCount++;
+          }
+        });
+
+        prtSnap.docs.forEach((d) => {
+          if (opsCount < 450) {
+            wipeBatch.delete(doc(db, 'print_logs', d.id));
+            opsCount++;
+          }
+        });
+
+        empSnap.docs.forEach((d) => {
+          const data = d.data() as Omit<Employee, 'id'>;
+          if (
+            (data.printCount && data.printCount > 0) ||
+            (data.lastPrintedAt && data.lastPrintedAt !== '')
+          ) {
+            if (opsCount < 450) {
+              wipeBatch.update(doc(db, 'employees', d.id), {
+                printCount: 0,
+                lastPrintedAt: '',
+                updatedAt: serverTimestamp(),
+              });
+              opsCount++;
+            }
+          }
+        });
+
+        if (opsCount > 0) {
+          await wipeBatch.commit();
+        }
+      }
+
       // 1. Employees
-      const empList: Employee[] = empSnap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<Employee, 'id'>),
-      }));
+      const empList: Employee[] = empSnap.docs.map((d) => {
+        const raw = d.data() as Omit<Employee, 'id'>;
+        return {
+          id: d.id,
+          ...raw,
+          printCount: shouldWipeHistoryOnce ? 0 : raw.printCount || 0,
+          lastPrintedAt: shouldWipeHistoryOnce ? '' : raw.lastPrintedAt || '',
+        };
+      });
       empList.sort((a, b) =>
         a.msnv.localeCompare(b.msnv, undefined, { numeric: true })
       );
@@ -174,17 +225,21 @@ export default function App() {
       }
 
       // 3. Import Logs
-      const impList: ImportHistory[] = impSnap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<ImportHistory, 'id'>),
-      }));
+      const impList: ImportHistory[] = shouldWipeHistoryOnce
+        ? []
+        : impSnap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<ImportHistory, 'id'>),
+          }));
       setImportLogs(impList);
 
       // 4. Print Logs
-      const prtList: PrintHistory[] = prtSnap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<PrintHistory, 'id'>),
-      }));
+      const prtList: PrintHistory[] = shouldWipeHistoryOnce
+        ? []
+        : prtSnap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<PrintHistory, 'id'>),
+          }));
       setPrintLogs(prtList);
 
       // 5. Settings
@@ -752,6 +807,61 @@ export default function App() {
       await batch.commit();
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'print_logs');
+    }
+  };
+
+  // Clear All History (Import Logs, Print Logs, and Reset Employee Print Counts)
+  const handleClearAllHistory = async () => {
+    const currentImportLogs = [...importLogs];
+    const currentPrintLogs = [...printLogs];
+    const printedEmps = employees.filter(
+      (e) => (e.printCount || 0) > 0 || Boolean(e.lastPrintedAt)
+    );
+
+    setImportLogs([]);
+    setPrintLogs([]);
+    setEmployees((prev) =>
+      prev.map((emp) => ({
+        ...emp,
+        printCount: 0,
+        lastPrintedAt: '',
+      }))
+    );
+
+    try {
+      const batch = writeBatch(db);
+      let ops = 0;
+
+      currentImportLogs.forEach((log) => {
+        if (ops < 450) {
+          batch.delete(doc(db, 'import_logs', log.id));
+          ops++;
+        }
+      });
+
+      currentPrintLogs.forEach((log) => {
+        if (ops < 450) {
+          batch.delete(doc(db, 'print_logs', log.id));
+          ops++;
+        }
+      });
+
+      printedEmps.forEach((emp) => {
+        if (ops < 450) {
+          batch.update(doc(db, 'employees', emp.id), {
+            printCount: 0,
+            lastPrintedAt: '',
+            updatedAt: serverTimestamp(),
+          });
+          ops++;
+        }
+      });
+
+      if (ops > 0) {
+        await batch.commit();
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, 'history');
     }
   };
 
