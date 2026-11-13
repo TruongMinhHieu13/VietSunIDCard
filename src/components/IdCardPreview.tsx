@@ -209,9 +209,16 @@ export const IdCardPreview: React.FC<IdCardPreviewProps> = ({
                       }}
                     >
                       {(() => {
-                        const dept = (employee.department || '').trim();
-                        const pfx = template.deptPrefix ?? 'BP. ';
-                        if (!pfx.trim() || /^bp\.?\s+/i.test(dept) || dept.toLowerCase().startsWith(pfx.trim().toLowerCase())) {
+                        const dept = (employee.department || '')
+                          .trim()
+                          .replace(/^(?:bp\.?\s*){2,}/i, 'BP. ');
+                        const rawPfx = (template.deptPrefix ?? '').trim();
+                        const pfx = /^bp\.?$/i.test(rawPfx) ? '' : template.deptPrefix ?? '';
+                        if (
+                          !pfx.trim() ||
+                          /^bp\.?\s+/i.test(dept) ||
+                          dept.toLowerCase().startsWith(pfx.trim().toLowerCase())
+                        ) {
                           return dept;
                         }
                         return `${pfx}${dept}`;

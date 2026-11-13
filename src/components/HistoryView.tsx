@@ -185,7 +185,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                         {emp.fullName}
                       </td>
                       <td className="py-2.5 px-4 text-slate-700">
-                        BP. {emp.department}
+                        {emp.department.replace(/^(?:bp\.?\s*){2,}/i, 'BP. ')}
                       </td>
                       <td className="py-2.5 px-4 font-mono-num text-slate-600">
                         {emp.joinDate}

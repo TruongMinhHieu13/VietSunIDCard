@@ -530,6 +530,9 @@ function tryMethodA_TraceBackdropAroundHead(
         leftEdgePts.push({ x: x + 1, y: seed.y });
         break;
       }
+      if (x === minX && roiX === 0 && distFromBg <= bgTolerance) {
+        leftEdgePts.push({ x: 0, y: seed.y });
+      }
       prevRgb = curRgb;
     }
   }
@@ -551,6 +554,9 @@ function tryMethodA_TraceBackdropAroundHead(
       ) {
         rightEdgePts.push({ x: x - 1, y: seed.y });
         break;
+      }
+      if (x === maxX && roiX + roiW >= imgW - 2 && distFromBg <= bgTolerance) {
+        rightEdgePts.push({ x: wW - 1, y: seed.y });
       }
       prevRgb = curRgb;
     }
@@ -614,6 +620,9 @@ function tryMethodA_TraceBackdropAroundHead(
       ) {
         topEdgePts.push({ x, y: y + 1 });
         break;
+      }
+      if (y === minTopY && roiY === 0 && distFromBg <= bgTolerance) {
+        topEdgePts.push({ x, y: 0 });
       }
       prevRgb = curRgb;
     }
@@ -1380,3 +1389,54 @@ export async function autoCropFileWithFaceAI(
     needsReview: Boolean(recommendedConfig.needsReview),
   };
 }
+
+/**
+ * Matches an uploaded image filename (e.g. "90993.jpg", "00441.png", "90993 - Nguyen Van A.jpg")
+ * to an employee by MSNV first (exact -> leading-zero normalized -> token boundary) or Full Name.
+ */
+export function matchEmployeeByPhotoFileName<
+  T extends { msnv: string; fullName: string }
+>(fileName: string, employees: T[]): T | undefined {
+  const base = fileName
+    .replace(/\.[^/.]+$/, '')
+    .trim()
+    .toLowerCase();
+  if (!base) return undefined;
+
+  // 1. Exact MSNV match (highest priority)
+  const exactMsnv = employees.find(
+    (emp) => emp.msnv.trim().toLowerCase() === base
+  );
+  if (exactMsnv) return exactMsnv;
+
+  // 2. Leading-zero normalized numeric MSNV match (e.g. "00441.jpg" <-> "441")
+  const baseNoZeros = base.replace(/^0+/, '');
+  if (baseNoZeros && /^\d+$/.test(baseNoZeros)) {
+    const numMatch = employees.find((emp) => {
+      const empClean = emp.msnv.trim().toLowerCase().replace(/^0+/, '');
+      return empClean === baseNoZeros;
+    });
+    if (numMatch) return numMatch;
+  }
+
+  // 3. Token boundary MSNV match (e.g. "90993_TruongMinhHieu.jpg", "MSNV-90993.png")
+  const tokens = base.split(/[\s_\-.,()[\]]+/).filter(Boolean);
+  if (tokens.length > 0) {
+    const tokenMatch = employees.find((emp) => {
+      const msnv = emp.msnv.trim().toLowerCase();
+      if (!msnv) return false;
+      const msnvNoZeros = msnv.replace(/^0+/, '');
+      return (
+        tokens.includes(msnv) ||
+        (Boolean(msnvNoZeros) &&
+          /^\d+$/.test(msnvNoZeros) &&
+          tokens.some((t) => t.replace(/^0+/, '') === msnvNoZeros))
+      );
+    });
+    if (tokenMatch) return tokenMatch;
+  }
+
+  // 4. Exact Full Name match
+  return employees.find((emp) => emp.fullName.trim().toLowerCase() === base);
+}
+

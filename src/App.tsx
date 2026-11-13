@@ -820,35 +820,35 @@ export default function App() {
     <div className="min-h-screen bg-slate-100 print:bg-white print:min-h-0 flex flex-col print:block">
       {/* Top Navigation Bar (Hidden when printing) */}
       <header className="no-print bg-white text-slate-900 border-b border-slate-200 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-6">
+        <div className="max-w-[1440px] mx-auto px-3 sm:px-5 min-h-14 py-1.5 flex flex-wrap items-center justify-between gap-2">
           {/* Zone 1: Brand Title with uploaded Favicon & VietSun Logo */}
           <div
             onClick={() => setActiveTab('dashboard')}
-            className="flex items-center gap-3 shrink-0 cursor-pointer"
+            className="flex items-center gap-2 shrink-0 cursor-pointer"
           >
             <img
               src={OFFICIAL_VIETSUN_FAVICON}
               alt="VietSun Icon"
               referrerPolicy="no-referrer"
-              className="w-8 h-8 object-contain shrink-0"
+              className="w-7 h-7 object-contain shrink-0"
             />
             <img
               src={OFFICIAL_VIETSUN_LOGO}
               alt="VIETSUN Logo"
               referrerPolicy="no-referrer"
-              className="h-8 w-auto object-contain hidden sm:block"
+              className="h-7 w-auto object-contain hidden sm:block"
             />
-            <span className="font-bold text-sm text-slate-800 whitespace-nowrap border-l border-slate-200 pl-3">
-              Quản Lý & In Thẻ Nhân Viên
+            <span className="font-bold text-xs text-slate-800 whitespace-nowrap border-l border-slate-200 pl-2.5 hidden xl:inline">
+              Quản Lý &amp; In Thẻ NV
             </span>
           </div>
 
-          {/* Zone 2: 6 Main Navigation Links */}
-          <nav className="flex items-center gap-1 overflow-x-auto py-1">
+          {/* Zone 2: Main Navigation Links (Compact, No Horizontal Scrollbar) */}
+          <nav className="flex flex-wrap items-center gap-1">
             <button
               type="button"
               onClick={() => setActiveTab('dashboard')}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
                 activeTab === 'dashboard'
                   ? 'bg-blue-700 text-white shadow-xs'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
@@ -861,33 +861,33 @@ export default function App() {
             <button
               type="button"
               onClick={() => setActiveTab('employees')}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
                 activeTab === 'employees'
                   ? 'bg-blue-700 text-white shadow-xs'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
               }`}
             >
               <Users className="w-3.5 h-3.5" />
-              Quản lý nhân viên ({employees.length})
+              Nhân viên
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('face_crop')}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
                 activeTab === 'face_crop'
                   ? 'bg-blue-700 text-white shadow-xs'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
               }`}
             >
               <ScanFace className="w-3.5 h-3.5" />
-              Cắt ảnh 3×4 AI
+              Cắt ảnh 3×4
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('designer')}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
                 activeTab === 'designer'
                   ? 'bg-blue-700 text-white shadow-xs'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
@@ -900,25 +900,20 @@ export default function App() {
             <button
               type="button"
               onClick={() => setActiveTab('print')}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
                 activeTab === 'print'
                   ? 'bg-blue-700 text-white shadow-xs'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
               }`}
             >
               <Printer className="w-3.5 h-3.5" />
-              In thẻ hàng loạt
-              {selectedEmployeeIds.size > 0 && (
-                <span className="ml-0.5 font-mono-num font-bold">
-                  ({selectedEmployeeIds.size})
-                </span>
-              )}
+              In thẻ
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('history')}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
                 activeTab === 'history'
                   ? 'bg-blue-700 text-white shadow-xs'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
@@ -931,7 +926,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setActiveTab('settings')}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
                 activeTab === 'settings'
                   ? 'bg-blue-700 text-white shadow-xs'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
@@ -947,7 +942,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setIsImportModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg cursor-pointer transition-colors whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg cursor-pointer transition-colors whitespace-nowrap shrink-0"
             >
               <FileSpreadsheet className="w-3.5 h-3.5" />
               IMPORT EXCEL

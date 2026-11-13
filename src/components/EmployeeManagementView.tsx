@@ -25,7 +25,10 @@ import {
   downloadSampleExcelTemplate,
   exportEmployeesToExcel,
 } from './ExcelImportModal';
-import { autoCropFileWithFaceAI } from '../utils/faceDetectionCrop';
+import {
+  autoCropFileWithFaceAI,
+  matchEmployeeByPhotoFileName,
+} from '../utils/faceDetectionCrop';
 import { FaceCropModal } from './FaceCropStudioView';
 
 export async function compressImageTo3x4DataUrl(file: File): Promise<string> {
@@ -117,6 +120,10 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadingPhotoEmpId, setUploadingPhotoEmpId] = useState<string | null>(null);
+  const [bulkUploadProgress, setBulkUploadProgress] = useState<{
+    current: number;
+    total: number;
+  } | null>(null);
   const [photoStatusBanner, setPhotoStatusBanner] = useState<string | null>(null);
 
   // Quick Card Preview Modal
@@ -256,54 +263,56 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
     }
   };
 
-  // Bulk 3x4 photo upload matching filename with MSNV or Full Name
+  // Direct no-preview photo upload matching filename with MSNV (works for 1 or many files)
   const handleBulkPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
-    let matchedCount = 0;
-    for (const file of files) {
-      const baseName = file.name
-        .replace(/\.[^/.]+$/, '')
-        .trim()
-        .toLowerCase();
-      const matchedEmp = employees.find((emp) => {
-        const msnvNorm = emp.msnv.trim().toLowerCase();
-        const nameNorm = emp.fullName.trim().toLowerCase();
-        return (
-          baseName === msnvNorm ||
-          baseName.includes(msnvNorm) ||
-          baseName === nameNorm
-        );
-      });
-      if (matchedEmp) {
-        try {
-          const compressed = await compressImageTo3x4DataUrl(file);
-          await onUpdateEmployee(matchedEmp.id, {
-            msnv: matchedEmp.msnv,
-            fullName: matchedEmp.fullName,
-            department: matchedEmp.department,
-            joinDate: matchedEmp.joinDate,
-            photoUrl: compressed,
-          });
-          matchedCount++;
-        } catch {
-          // ignore single invalid file
+    setBulkUploadProgress({ current: 0, total: files.length });
+    const matchedNames: string[] = [];
+    const unmatchedFiles: string[] = [];
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setBulkUploadProgress({ current: i + 1, total: files.length });
+        const matchedEmp = matchEmployeeByPhotoFileName(file.name, employees);
+        if (matchedEmp) {
+          try {
+            const compressed = await compressImageTo3x4DataUrl(file);
+            await onUpdateEmployee(matchedEmp.id, {
+              msnv: matchedEmp.msnv,
+              fullName: matchedEmp.fullName,
+              department: matchedEmp.department,
+              joinDate: matchedEmp.joinDate,
+              photoUrl: compressed,
+            });
+            matchedNames.push(`${matchedEmp.msnv} (${matchedEmp.fullName})`);
+          } catch {
+            unmatchedFiles.push(file.name);
+          }
+        } else {
+          unmatchedFiles.push(file.name);
         }
       }
-    }
 
-    if (matchedCount > 0) {
-      setPhotoStatusBanner(
-        `Đã ghép và cập nhật thành công ${matchedCount}/${files.length} ảnh 3×4 theo MSNV / Họ tên!`
-      );
-    } else {
-      setPhotoStatusBanner(
-        'Không tìm thấy nhân viên trùng khớp tên file ảnh. Mẹo: Đặt tên file ảnh theo MSNV (VD: 90993.jpg) hoặc bấm trực tiếp vào ô "Ảnh 3×4" của từng nhân viên.'
-      );
+      if (matchedNames.length > 0) {
+        const listStr = matchedNames.slice(0, 5).join(', ');
+        const extra =
+          matchedNames.length > 5 ? ` và ${matchedNames.length - 5} NV khác` : '';
+        setPhotoStatusBanner(
+          `Đã thêm thẳng ${matchedNames.length}/${files.length} ảnh 3×4 theo MSNV (không cần preview): ${listStr}${extra}!`
+        );
+      } else {
+        setPhotoStatusBanner(
+          `Không tìm thấy nhân viên có MSNV trùng tên file ảnh (${unmatchedFiles.slice(0, 3).join(', ')}). Mẹo: Đặt tên ảnh là MSNV (VD: 90993.jpg).`
+        );
+      }
+      setTimeout(() => setPhotoStatusBanner(null), 6500);
+    } finally {
+      setBulkUploadProgress(null);
+      e.target.value = '';
     }
-    setTimeout(() => setPhotoStatusBanner(null), 6000);
-    e.target.value = '';
   };
 
   const handleSaveEmployeeForm = async (e: React.FormEvent) => {
@@ -422,18 +431,21 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
             Cắt Ảnh 3×4 Bằng AI
           </button>
 
-          {/* BULK 3x4 PHOTO UPLOAD BY MSNV / NAME */}
+          {/* DIRECT PHOTO UPLOAD BY MSNV WITHOUT PREVIEW */}
           {employees.length > 0 && (
             <label
               className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded-lg cursor-pointer transition-colors"
-              title="Chọn nhiều ảnh bất kỳ cùng lúc (AI tự nhận diện mặt cắt 3×4 và ghép theo tên file trùng MSNV)"
+              title="Chọn 1 hoặc nhiều ảnh có tên file là MSNV (VD: 90993.jpg) để thêm thẳng vào nhân viên tương ứng không cần mở preview"
             >
               <Camera className="w-3.5 h-3.5" />
-              Tải Ảnh 3×4 Hàng Loạt (AI)
+              {bulkUploadProgress
+                ? `Đang thêm ${bulkUploadProgress.current}/${bulkUploadProgress.total} ảnh...`
+                : 'Thêm Ảnh Theo MSNV (Không Preview)'}
               <input
                 type="file"
                 accept="image/*"
                 multiple
+                disabled={Boolean(bulkUploadProgress)}
                 onChange={handleBulkPhotoUpload}
                 className="hidden"
               />
@@ -751,7 +763,7 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
                         {emp.fullName}
                       </td>
                       <td className="py-2.5 px-4 text-slate-700">
-                        BP. {emp.department}
+                        {emp.department.replace(/^(?:bp\.?\s*){2,}/i, 'BP. ')}
                       </td>
                       <td className="py-2.5 px-4 font-mono-num text-slate-700">
                         {emp.joinDate}

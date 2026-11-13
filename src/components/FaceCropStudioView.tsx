@@ -34,6 +34,7 @@ import {
   computeIdCropConfigFromFace,
   detectFacesInImage,
   loadImageFromFile,
+  matchEmployeeByPhotoFileName,
   renderCroppedIdPhotoToDataUrl,
   tryMethodB_TableColorBlockDeskew,
 } from '../utils/faceDetectionCrop';
@@ -120,6 +121,10 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
   const [empSearchQuery, setEmpSearchQuery] = useState<string>('');
   const [isSavingToEmp, setIsSavingToEmp] = useState<boolean>(false);
   const [isBatchProcessing, setIsBatchProcessing] = useState<boolean>(false);
+  const [directMsnvProgress, setDirectMsnvProgress] = useState<{
+    current: number;
+    total: number;
+  } | null>(null);
   const [statusMessage, setStatusMessage] = useState<{
     type: 'success' | 'info' | 'warning';
     text: string;
@@ -172,16 +177,7 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
   // Match filename with employee MSNV or Full Name automatically
   const findMatchingEmployeeByFileName = useCallback(
     (fileName: string): Employee | undefined => {
-      const base = fileName
-        .replace(/\.[^/.]+$/, '')
-        .trim()
-        .toLowerCase();
-      if (!base) return undefined;
-      return employees.find((emp) => {
-        const msnv = emp.msnv.trim().toLowerCase();
-        const name = emp.fullName.trim().toLowerCase();
-        return base === msnv || base.includes(msnv) || base === name;
-      });
+      return matchEmployeeByPhotoFileName(fileName, employees);
     },
     [employees]
   );
@@ -659,6 +655,70 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
     }
   };
 
+  // Direct Upload without opening preview: takes filename as MSNV and adds straight to the matching employee(s)
+  const handleDirectUploadByMsnvNoPreview = async (
+    fileList: FileList | File[]
+  ) => {
+    const files = Array.from(fileList).filter((f) =>
+      f.type.startsWith('image/')
+    );
+    if (files.length === 0) return;
+
+    setDirectMsnvProgress({ current: 0, total: files.length });
+    const matchedLabels: string[] = [];
+    const unmatchedFiles: string[] = [];
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setDirectMsnvProgress({ current: i + 1, total: files.length });
+        const matchedEmp = findMatchingEmployeeByFileName(file.name);
+
+        if (!matchedEmp) {
+          unmatchedFiles.push(file.name);
+          continue;
+        }
+
+        try {
+          const img = await loadImageFromFile(file);
+          const { recommendedConfig } = await detectFacesInImage(img);
+          const dataUrl = renderCroppedIdPhotoToDataUrl(
+            img,
+            { ...recommendedConfig, aspectRatio: currentAspectRatio },
+            OUTPUT_3X4_WIDTH_PX
+          );
+          await onUpdateEmployeePhoto(matchedEmp, dataUrl);
+          matchedLabels.push(`${matchedEmp.msnv} (${matchedEmp.fullName})`);
+        } catch {
+          unmatchedFiles.push(file.name);
+        }
+      }
+
+      if (matchedLabels.length > 0) {
+        const previewList = matchedLabels.slice(0, 5).join(', ');
+        const moreText =
+          matchedLabels.length > 5
+            ? ` và ${matchedLabels.length - 5} NV khác`
+            : '';
+        const unmatchedNote =
+          unmatchedFiles.length > 0
+            ? ` · Không khớp MSNV (${unmatchedFiles.length} file: ${unmatchedFiles.slice(0, 3).join(', ')})`
+            : '';
+        setStatusMessage({
+          type: unmatchedFiles.length > 0 ? 'warning' : 'success',
+          text: `Đã thêm thẳng ${matchedLabels.length}/${files.length} ảnh 3×4 theo MSNV (không cần preview): ${previewList}${moreText}${unmatchedNote}!`,
+        });
+      } else {
+        setStatusMessage({
+          type: 'warning',
+          text: `Không tìm thấy nhân viên có MSNV trùng tên ảnh (${unmatchedFiles.slice(0, 4).join(', ')}). Vui lòng đặt tên file ảnh theo đúng MSNV (VD: 90993.jpg, 91051.png).`,
+        });
+      }
+    } finally {
+      setDirectMsnvProgress(null);
+    }
+  };
+
   // Compute crop box rectangle in percentage of the original image for the interactive overlay
   const cropBoxOverlayPct = useMemo(() => {
     if (!loadedImage) return null;
@@ -720,9 +780,33 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          {/* DIRECT UPLOAD BY MSNV WITHOUT PREVIEW */}
+          <label
+            className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg cursor-pointer shadow-xs transition-colors"
+            title="Chọn 1 hoặc nhiều ảnh có tên file là MSNV (VD: 90993.jpg) để cắt 3×4 và gán thẳng vào nhân viên mà không cần mở bảng preview"
+          >
+            <UserCheck className="w-4 h-4" />
+            {directMsnvProgress
+              ? `Đang thêm ${directMsnvProgress.current}/${directMsnvProgress.total} ảnh...`
+              : 'Thêm Thẳng Theo MSNV (Không Preview)'}
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              disabled={Boolean(directMsnvProgress)}
+              onChange={(e) => {
+                if (e.target.files) {
+                  void handleDirectUploadByMsnvNoPreview(e.target.files);
+                }
+                e.target.value = '';
+              }}
+              className="hidden"
+            />
+          </label>
+
           <label className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-lg cursor-pointer shadow-xs transition-colors">
             <Upload className="w-4 h-4" />
-            Chọn Ảnh Bất Kỳ Từ Máy
+            Chọn Ảnh (Có Preview &amp; Chỉnh Khung)
             <input
               type="file"
               accept="image/*"
@@ -735,18 +819,18 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
             />
           </label>
 
-          {photoQueue.length > 1 && (
+          {photoQueue.length >= 1 && (
             <button
               type="button"
               disabled={isBatchProcessing}
               onClick={handleBatchAutoCropToEmployees}
               className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 rounded-lg cursor-pointer disabled:opacity-50 transition-colors"
-              title="Tự động chạy quy trình A→B→C cho tất cả ảnh đã tải lên"
+              title="Tự động chạy quy trình A→B→C và gán theo MSNV cho tất cả ảnh đang mở"
             >
               <Wand2 className="w-4 h-4" />
               {isBatchProcessing
                 ? 'Đang xử lý A→B→C...'
-                : `Xử Lý Hàng Loạt (${photoQueue.length} ảnh)`}
+                : `Gán Hàng Loạt (${photoQueue.length} ảnh)`}
             </button>
           )}
 
@@ -973,20 +1057,45 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                 Hệ thống tự động thử lần lượt: <strong className="text-slate-700">Cách A</strong> (Tìm mặt → lần phông nền quanh đầu lấy mép trên &amp; 2 mép bên → nắn thẳng → cắt 3:4 từ mép trên) → <strong className="text-slate-700">Cách B</strong> (Tách khối ảnh trên mặt bàn → nắn thẳng) → <strong className="text-slate-700">Cách C</strong> (Cắt 3:4 quanh mặt, đánh dấu &quot;XEM&quot;).
               </p>
 
-              <label className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-xl cursor-pointer shadow-xs transition-colors">
-                <Upload className="w-4 h-4" />
-                Tải Ảnh Lên Để Cắt 3×4 (354×472 px)
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={(e) => {
-                    if (e.target.files) handleAddFiles(e.target.files);
-                    e.target.value = '';
-                  }}
-                  className="hidden"
-                />
-              </label>
+              <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+                <label
+                  className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl cursor-pointer shadow-xs transition-colors"
+                  title="Lấy tên file ảnh là MSNV (VD: 90993.jpg) thêm thẳng vào nhân viên tương ứng, không cần mở bảng preview"
+                >
+                  <UserCheck className="w-4 h-4" />
+                  {directMsnvProgress
+                    ? `Đang thêm ${directMsnvProgress.current}/${directMsnvProgress.total} ảnh...`
+                    : 'Thêm Thẳng Theo MSNV (Không Cần Preview)'}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    disabled={Boolean(directMsnvProgress)}
+                    onChange={(e) => {
+                      if (e.target.files) {
+                        void handleDirectUploadByMsnvNoPreview(e.target.files);
+                      }
+                      e.target.value = '';
+                    }}
+                    className="hidden"
+                  />
+                </label>
+
+                <label className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-xl cursor-pointer shadow-xs transition-colors">
+                  <Upload className="w-4 h-4" />
+                  Tải Ảnh Lên Để Xem Trước &amp; Cắt 3×4
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={(e) => {
+                      if (e.target.files) handleAddFiles(e.target.files);
+                      e.target.value = '';
+                    }}
+                    className="hidden"
+                  />
+                </label>
+              </div>
             </div>
           ) : (
             <div className="p-4 bg-slate-900 flex flex-col items-center justify-center min-h-[440px] relative select-none overflow-hidden">
