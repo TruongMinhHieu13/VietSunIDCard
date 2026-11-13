@@ -125,6 +125,8 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
     current: number;
     total: number;
   } | null>(null);
+  const [isDirectDropModalOpen, setIsDirectDropModalOpen] =
+    useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<{
     type: 'success' | 'info' | 'warning';
     text: string;
@@ -757,52 +759,33 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
     <div className="space-y-5">
       {/* Top Header Banner */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-start gap-3">
+        <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-blue-700 text-white flex items-center justify-center shrink-0 shadow-xs">
             <ScanFace className="w-5 h-5" />
           </div>
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-base font-bold text-slate-900">
-                Công Cụ Cắt Lấy Ảnh Thẻ 3×4 Tự Động (Quy Trình 3 Bước A → B → C)
-              </h2>
-              <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200 rounded font-mono-num">
-                3×4 cm @ 300 DPI (354 × 472 px) + Tăng Nét Nhẹ
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Dùng cho cả <strong className="text-slate-700">ảnh thẻ đặt trên bàn</strong> lẫn <strong className="text-slate-700">ảnh thẻ dán trên hồ sơ (có chữ, dấu đỏ xung quanh)</strong>:
-              <span className="ml-1 text-slate-600">
-                (A) Tìm mặt &amp; lần phông nền lấy mép trên + 2 mép bên → (B) Tách khối màu trên bàn → (C) Cắt 3:4 quanh mặt [XEM].
-              </span>
-            </p>
-          </div>
+          <h2 className="text-base font-bold text-slate-900">
+            Công Cụ Cắt Lấy Ảnh Thẻ 3×4 Tự Động
+          </h2>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          {/* DIRECT UPLOAD BY MSNV WITHOUT PREVIEW */}
-          <label
+          {/* DIRECT UPLOAD BY MSNV WITHOUT PREVIEW (Opens Drag & Drop + Error Report Modal) */}
+          <button
+            type="button"
+            onClick={() => setIsDirectDropModalOpen(true)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDirectDropModalOpen(true);
+            }}
             className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg cursor-pointer shadow-xs transition-colors"
-            title="Chọn 1 hoặc nhiều ảnh có tên file là MSNV (VD: 90993.jpg) để cắt 3×4 và gán thẳng vào nhân viên mà không cần mở bảng preview"
+            title="Bấm để mở khung kéo thả ảnh theo MSNV (không cần preview) và kiểm tra báo lỗi chi tiết"
           >
             <UserCheck className="w-4 h-4" />
             {directMsnvProgress
               ? `Đang thêm ${directMsnvProgress.current}/${directMsnvProgress.total} ảnh...`
               : 'Thêm Thẳng Theo MSNV (Không Preview)'}
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              disabled={Boolean(directMsnvProgress)}
-              onChange={(e) => {
-                if (e.target.files) {
-                  void handleDirectUploadByMsnvNoPreview(e.target.files);
-                }
-                e.target.value = '';
-              }}
-              className="hidden"
-            />
-          </label>
+          </button>
 
           <label className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-lg cursor-pointer shadow-xs transition-colors">
             <Upload className="w-4 h-4" />
@@ -838,7 +821,7 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
             <button
               type="button"
               onClick={onCloseModal}
-              className="inline-flex items-center gap-1 px-3 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+              className="ml-auto inline-flex items-center gap-1 px-3.5 py-2.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg cursor-pointer shadow-xs transition-colors"
             >
               <X className="w-4 h-4" />
               Đóng
@@ -1051,51 +1034,8 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                 <ScanFace className="w-8 h-8" />
               </div>
               <h3 className="text-sm font-bold text-slate-900">
-                Kéo thả ảnh vào đây, bấm Chọn Ảnh hoặc nhấn Ctrl + V
+                Kéo thả ảnh vào đây hoặc chọn ảnh
               </h3>
-              <p className="text-xs text-slate-500 max-w-lg mt-1.5 leading-relaxed">
-                Hệ thống tự động thử lần lượt: <strong className="text-slate-700">Cách A</strong> (Tìm mặt → lần phông nền quanh đầu lấy mép trên &amp; 2 mép bên → nắn thẳng → cắt 3:4 từ mép trên) → <strong className="text-slate-700">Cách B</strong> (Tách khối ảnh trên mặt bàn → nắn thẳng) → <strong className="text-slate-700">Cách C</strong> (Cắt 3:4 quanh mặt, đánh dấu &quot;XEM&quot;).
-              </p>
-
-              <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-                <label
-                  className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl cursor-pointer shadow-xs transition-colors"
-                  title="Lấy tên file ảnh là MSNV (VD: 90993.jpg) thêm thẳng vào nhân viên tương ứng, không cần mở bảng preview"
-                >
-                  <UserCheck className="w-4 h-4" />
-                  {directMsnvProgress
-                    ? `Đang thêm ${directMsnvProgress.current}/${directMsnvProgress.total} ảnh...`
-                    : 'Thêm Thẳng Theo MSNV (Không Cần Preview)'}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    disabled={Boolean(directMsnvProgress)}
-                    onChange={(e) => {
-                      if (e.target.files) {
-                        void handleDirectUploadByMsnvNoPreview(e.target.files);
-                      }
-                      e.target.value = '';
-                    }}
-                    className="hidden"
-                  />
-                </label>
-
-                <label className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-xl cursor-pointer shadow-xs transition-colors">
-                  <Upload className="w-4 h-4" />
-                  Tải Ảnh Lên Để Xem Trước &amp; Cắt 3×4
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    onChange={(e) => {
-                      if (e.target.files) handleAddFiles(e.target.files);
-                      e.target.value = '';
-                    }}
-                    className="hidden"
-                  />
-                </label>
-              </div>
             </div>
           ) : (
             <div className="p-4 bg-slate-900 flex flex-col items-center justify-center min-h-[440px] relative select-none overflow-hidden">
@@ -1743,6 +1683,300 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
           </div>
         </div>
       </div>
+
+      <DirectMsnvDropModal
+        isOpen={isDirectDropModalOpen}
+        onClose={() => setIsDirectDropModalOpen(false)}
+        employees={employees}
+        onUpdateEmployeePhoto={onUpdateEmployeePhoto}
+      />
+    </div>
+  );
+};
+
+export interface DirectMsnvUploadErrorItem {
+  fileName: string;
+  reason: string;
+}
+
+export interface DirectMsnvUploadSuccessItem {
+  fileName: string;
+  msnv: string;
+  fullName: string;
+  department: string;
+}
+
+interface DirectMsnvDropModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  employees: Employee[];
+  onUpdateEmployeePhoto: (emp: Employee, photoUrl: string) => Promise<void>;
+}
+
+export const DirectMsnvDropModal: React.FC<DirectMsnvDropModalProps> = ({
+  isOpen,
+  onClose,
+  employees,
+  onUpdateEmployeePhoto,
+}) => {
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [progress, setProgress] = useState<{
+    current: number;
+    total: number;
+  } | null>(null);
+  const [successItems, setSuccessItems] = useState<
+    DirectMsnvUploadSuccessItem[]
+  >([]);
+  const [errorItems, setErrorItems] = useState<DirectMsnvUploadErrorItem[]>([]);
+
+  if (!isOpen) return null;
+
+  const processFiles = async (fileList: FileList | File[]) => {
+    const files = Array.from(fileList);
+    if (files.length === 0) return;
+
+    setProgress({ current: 0, total: files.length });
+    const nextSuccess: DirectMsnvUploadSuccessItem[] = [];
+    const nextErrors: DirectMsnvUploadErrorItem[] = [];
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setProgress({ current: i + 1, total: files.length });
+
+        // 1. Validate image file format
+        const isImageExt = /\.(jpe?g|png|webp|bmp|gif)$/i.test(file.name);
+        if (!file.type.startsWith('image/') && !isImageExt) {
+          nextErrors.push({
+            fileName: file.name,
+            reason:
+              'Sai định dạng file (không phải file ảnh hợp lệ JPG, PNG, WEBP).',
+          });
+          continue;
+        }
+
+        if (file.size === 0) {
+          nextErrors.push({
+            fileName: file.name,
+            reason: 'File ảnh rỗng (0 KB) hoặc bị lỗi dữ liệu.',
+          });
+          continue;
+        }
+
+        // 2. Match filename with employee MSNV
+        const matchedEmp = matchEmployeeByPhotoFileName(file.name, employees);
+        if (!matchedEmp) {
+          const baseName = file.name.replace(/\.[^/.]+$/, '').trim();
+          nextErrors.push({
+            fileName: file.name,
+            reason: `Không tìm thấy nhân viên nào có MSNV trùng với tên ảnh "${baseName}".`,
+          });
+          continue;
+        }
+
+        // 3. Load & process 3x4 image (354x472 px @ 300 DPI)
+        try {
+          const img = await loadImageFromFile(file);
+          if (img.naturalWidth < 20 || img.naturalHeight < 20) {
+            nextErrors.push({
+              fileName: file.name,
+              reason: `Kích thước ảnh quá nhỏ (${img.naturalWidth}×${img.naturalHeight} px), không đủ chuẩn làm ảnh thẻ.`,
+            });
+            continue;
+          }
+
+          const { recommendedConfig } = await detectFacesInImage(img);
+          const dataUrl = renderCroppedIdPhotoToDataUrl(
+            img,
+            { ...recommendedConfig, aspectRatio: 3 / 4 },
+            OUTPUT_3X4_WIDTH_PX
+          );
+          await onUpdateEmployeePhoto(matchedEmp, dataUrl);
+          nextSuccess.push({
+            fileName: file.name,
+            msnv: matchedEmp.msnv,
+            fullName: matchedEmp.fullName,
+            department: matchedEmp.department,
+          });
+        } catch {
+          nextErrors.push({
+            fileName: file.name,
+            reason:
+              'File hình ảnh bị hỏng hoặc không thể giải mã dữ liệu ảnh.',
+          });
+        }
+      }
+
+      setSuccessItems((prev) => [...nextSuccess, ...prev]);
+      setErrorItems((prev) => [...nextErrors, ...prev]);
+    } finally {
+      setProgress(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/65 p-4 overflow-y-auto">
+      <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-2xl p-6 space-y-5 shadow-2xl">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
+              <UserCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-900">
+                Thêm Ảnh Thẳng Theo MSNV (Không Cần Preview)
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Kéo thả 1 hoặc nhiều ảnh có tên file là <strong>MSNV</strong> (VD: <code className="font-mono-num bg-slate-100 px-1 rounded">90993.jpg</code>, <code className="font-mono-num bg-slate-100 px-1 rounded">00441.png</code>) để gán thẳng vào nhân viên tương ứng
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Drag & Drop Zone */}
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsDragOver(true);
+          }}
+          onDragLeave={() => setIsDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setIsDragOver(false);
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+              void processFiles(e.dataTransfer.files);
+            }
+          }}
+          className={`border-2 border-dashed rounded-xl p-8 text-center transition-all ${
+            isDragOver
+              ? 'border-emerald-600 bg-emerald-50/70'
+              : 'border-slate-300 bg-slate-50 hover:border-emerald-500 hover:bg-emerald-50/30'
+          }`}
+        >
+          <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto mb-3">
+            <Upload className="w-6 h-6" />
+          </div>
+          <div className="text-sm font-bold text-slate-900">
+            Kéo thả các file ảnh vào khung này
+          </div>
+          <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+            Tên mỗi file ảnh phải trùng với <strong>MSNV</strong> của nhân viên (ví dụ: <code className="font-mono-num text-slate-700">90993.jpg</code>). Hệ thống sẽ tự động chuẩn hóa 3×4 (354×472 px) và báo lỗi nếu có hình nhập sai.
+          </p>
+
+          <label className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl cursor-pointer shadow-xs transition-colors">
+            <Upload className="w-4 h-4" />
+            {progress
+              ? `Đang xử lý ${progress.current}/${progress.total} ảnh...`
+              : 'Hoặc Bấm Để Chọn Nhiều Ảnh Từ Máy'}
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              disabled={Boolean(progress)}
+              onChange={(e) => {
+                if (e.target.files) {
+                  void processFiles(e.target.files);
+                }
+                e.target.value = '';
+              }}
+              className="hidden"
+            />
+          </label>
+        </div>
+
+        {/* Error Reporting Box (Báo lỗi nếu hình nhập vào sai) */}
+        {errorItems.length > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-red-800">
+                <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                <span>
+                  Báo lỗi hình nhập vào sai / không khớp MSNV ({errorItems.length} file):
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setErrorItems([])}
+                className="text-[11px] font-semibold text-red-700 hover:underline cursor-pointer"
+              >
+                Xóa danh sách lỗi
+              </button>
+            </div>
+            <div className="max-h-44 overflow-y-auto divide-y divide-red-200/70 bg-white border border-red-200 rounded-lg px-3 py-1 text-xs">
+              {errorItems.map((err, idx) => (
+                <div
+                  key={`${err.fileName}_${idx}`}
+                  className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1"
+                >
+                  <span className="font-mono-num font-bold text-red-700 break-all">
+                    {err.fileName}
+                  </span>
+                  <span className="text-red-600 text-[11px]">{err.reason}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Success Reporting Box */}
+        {successItems.length > 0 && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-emerald-900">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>
+                  Đã thêm thẳng thành công ({successItems.length} ảnh):
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSuccessItems([])}
+                className="text-[11px] font-semibold text-emerald-700 hover:underline cursor-pointer"
+              >
+                Ẩn danh sách
+              </button>
+            </div>
+            <div className="max-h-44 overflow-y-auto divide-y divide-emerald-200/70 bg-white border border-emerald-200 rounded-lg px-3 py-1 text-xs">
+              {successItems.map((item, idx) => (
+                <div
+                  key={`${item.fileName}_${idx}`}
+                  className="py-2 flex flex-wrap items-center justify-between gap-2"
+                >
+                  <span className="font-mono-num text-slate-600">
+                    File: <strong>{item.fileName}</strong>
+                  </span>
+                  <span className="text-emerald-800 font-semibold">
+                    → MSNV:{' '}
+                    <strong className="font-mono-num">{item.msnv}</strong> —{' '}
+                    {item.fullName} ({item.department})
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg cursor-pointer shadow-xs transition-colors"
+          >
+            <X className="w-3.5 h-3.5" />
+            Đóng
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
@@ -1783,3 +2017,4 @@ export const FaceCropModal: React.FC<FaceCropModalProps> = ({
     </div>
   );
 };
+

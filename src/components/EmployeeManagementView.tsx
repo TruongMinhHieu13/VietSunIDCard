@@ -29,7 +29,7 @@ import {
   autoCropFileWithFaceAI,
   matchEmployeeByPhotoFileName,
 } from '../utils/faceDetectionCrop';
-import { FaceCropModal } from './FaceCropStudioView';
+import { DirectMsnvDropModal, FaceCropModal } from './FaceCropStudioView';
 
 export async function compressImageTo3x4DataUrl(file: File): Promise<string> {
   const { dataUrl } = await autoCropFileWithFaceAI(file, 3 / 4, 354);
@@ -132,6 +132,7 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
   // Interactive AI Face Cropper Modal State
   const [faceCropEmployee, setFaceCropEmployee] = useState<Employee | null>(null);
   const [isFaceCropModalOpen, setIsFaceCropModalOpen] = useState(false);
+  const [isDirectMsnvModalOpen, setIsDirectMsnvModalOpen] = useState(false);
 
   // Delete Confirmation Modal
   const [deletingEmployee, setDeletingEmployee] = useState<Employee | null>(null);
@@ -431,25 +432,22 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
             Cắt Ảnh 3×4 Bằng AI
           </button>
 
-          {/* DIRECT PHOTO UPLOAD BY MSNV WITHOUT PREVIEW */}
+          {/* DIRECT PHOTO UPLOAD BY MSNV WITHOUT PREVIEW (Opens Drag & Drop + Error Report Modal) */}
           {employees.length > 0 && (
-            <label
+            <button
+              type="button"
+              onClick={() => setIsDirectMsnvModalOpen(true)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDirectMsnvModalOpen(true);
+              }}
               className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded-lg cursor-pointer transition-colors"
-              title="Chọn 1 hoặc nhiều ảnh có tên file là MSNV (VD: 90993.jpg) để thêm thẳng vào nhân viên tương ứng không cần mở preview"
+              title="Bấm để mở khung kéo thả ảnh theo MSNV (không cần preview) và kiểm tra báo lỗi nếu hình sai"
             >
               <Camera className="w-3.5 h-3.5" />
-              {bulkUploadProgress
-                ? `Đang thêm ${bulkUploadProgress.current}/${bulkUploadProgress.total} ảnh...`
-                : 'Thêm Ảnh Theo MSNV (Không Preview)'}
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                disabled={Boolean(bulkUploadProgress)}
-                onChange={handleBulkPhotoUpload}
-                className="hidden"
-              />
-            </label>
+              Thêm Ảnh Theo MSNV (Không Preview)
+            </button>
           )}
 
           <button
@@ -1176,6 +1174,23 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
         }}
         onOpenPrintDialog={onOpenPrintDialog}
       />
+
+      {/* Modal 6: Direct Drag & Drop Upload by MSNV (No Preview + Detailed Error Report) */}
+      <DirectMsnvDropModal
+        isOpen={isDirectMsnvModalOpen}
+        onClose={() => setIsDirectMsnvModalOpen(false)}
+        employees={employees}
+        onUpdateEmployeePhoto={async (emp, newPhotoUrl) => {
+          await onUpdateEmployee(emp.id, {
+            msnv: emp.msnv,
+            fullName: emp.fullName,
+            department: emp.department,
+            joinDate: emp.joinDate,
+            photoUrl: newPhotoUrl,
+          });
+        }}
+      />
     </div>
   );
 };
+

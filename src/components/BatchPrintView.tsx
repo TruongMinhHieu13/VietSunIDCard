@@ -191,7 +191,6 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
   const [isFaceCropModalOpen, setIsFaceCropModalOpen] = useState(false);
 
   const sheetRefs = useRef<Array<HTMLDivElement | null>>([]);
-  const hasAutoSelectedRef = useRef(false);
 
   // Auto-persist print layout configuration to localStorage whenever any value changes
   useEffect(() => {
@@ -259,18 +258,6 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
       setIsSavingDefault(false);
     }
   };
-
-  // Auto-select all employees on first open if none are currently selected
-  useEffect(() => {
-    if (
-      !hasAutoSelectedRef.current &&
-      selectedEmployeeIds.size === 0 &&
-      employees.length > 0
-    ) {
-      hasAutoSelectedRef.current = true;
-      onChangeSelectedIds(new Set(employees.map((e) => e.id)));
-    }
-  }, [employees, selectedEmployeeIds.size, onChangeSelectedIds]);
 
   const departments = useMemo(() => {
     const set = new Set<string>();
