@@ -289,7 +289,7 @@ export const CardDesignerView: React.FC<CardDesignerViewProps> = ({
                     <label className="flex items-center gap-2.5 p-2.5 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 text-xs">
                       <input
                         type="radio"
-                        checked={draft.layoutStyle === 'vietsun_table'}
+                        checked={true}
                         onChange={() =>
                           setDraft({
                             ...draft,
@@ -305,52 +305,6 @@ export const CardDesignerView: React.FC<CardDesignerViewProps> = ({
                         </span>
                         <span className="text-slate-500">
                           Viền đôi sắc nét, logo VIETSUN bên trái, ảnh 3×4 và 4 dòng kẻ ngang
-                        </span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-center gap-2.5 p-2.5 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 text-xs">
-                      <input
-                        type="radio"
-                        checked={draft.layoutStyle === 'modern_corporate'}
-                        onChange={() =>
-                          setDraft({
-                            ...draft,
-                            layoutStyle: 'modern_corporate',
-                            orientation: 'landscape',
-                            fontFamily: "'Plus Jakarta Sans', sans-serif",
-                          })
-                        }
-                      />
-                      <div>
-                        <span className="font-bold text-slate-900 block">
-                          Doanh nghiệp Hiện đại (Ngang CR80)
-                        </span>
-                        <span className="text-slate-500">
-                          Header dải màu xanh dương hiện đại, bố cục phân cột thoáng
-                        </span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-center gap-2.5 p-2.5 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 text-xs">
-                      <input
-                        type="radio"
-                        checked={draft.layoutStyle === 'minimal_vertical'}
-                        onChange={() =>
-                          setDraft({
-                            ...draft,
-                            layoutStyle: 'minimal_vertical',
-                            orientation: 'portrait',
-                            fontFamily: "'Plus Jakarta Sans', sans-serif",
-                          })
-                        }
-                      />
-                      <div>
-                        <span className="font-bold text-slate-900 block">
-                          Thẻ Đứng Hiện Đại (Dọc CR80 - 54mm × 85.6mm)
-                        </span>
-                        <span className="text-slate-500">
-                          Phù hợp dây đeo dọc văn phòng
                         </span>
                       </div>
                     </label>
