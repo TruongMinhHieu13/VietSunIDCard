@@ -243,8 +243,8 @@ export const DEFAULT_CARD_TEMPLATES: Omit<CardTemplate, 'id' | 'ownerId' | 'crea
 
 export const SAMPLE_EMPLOYEES_SEED = [
   {
-    msnv: '90993',
-    fullName: 'TRƯƠNG MINH HIẾU',
+    msnv: '06868',
+    fullName: 'TÊN NHÂN VIÊN',
     department: 'Bảo trì vận hành',
     joinDate: '02/10/2026',
     photoUrl: '',

@@ -184,16 +184,33 @@ export default function App() {
         }
       }
 
-      // 1. Employees
-      const empList: Employee[] = empSnap.docs.map((d) => {
+      // 1. Employees (Also migrate old demo record 90993 / TRƯƠNG MINH HIẾU -> 06868 / TÊN NHÂN VIÊN)
+      const empList: Employee[] = [];
+      for (const d of empSnap.docs) {
         const raw = d.data() as Omit<Employee, 'id'>;
-        return {
+        const isOldDemo =
+          raw.msnv === '90993' ||
+          raw.fullName?.trim().toUpperCase() === 'TRƯƠNG MINH HIẾU';
+        const nextMsnv = isOldDemo ? '06868' : raw.msnv;
+        const nextFullName = isOldDemo ? 'TÊN NHÂN VIÊN' : raw.fullName;
+
+        if (isOldDemo && (raw.msnv !== '06868' || raw.fullName !== 'TÊN NHÂN VIÊN')) {
+          updateDoc(doc(db, 'employees', d.id), {
+            msnv: '06868',
+            fullName: 'TÊN NHÂN VIÊN',
+            updatedAt: serverTimestamp(),
+          }).catch(() => {});
+        }
+
+        empList.push({
           id: d.id,
           ...raw,
+          msnv: nextMsnv,
+          fullName: nextFullName,
           printCount: shouldWipeHistoryOnce ? 0 : raw.printCount || 0,
           lastPrintedAt: shouldWipeHistoryOnce ? '' : raw.lastPrintedAt || '',
-        };
-      });
+        });
+      }
       empList.sort((a, b) =>
         a.msnv.localeCompare(b.msnv, undefined, { numeric: true })
       );

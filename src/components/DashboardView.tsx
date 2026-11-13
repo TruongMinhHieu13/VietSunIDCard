@@ -23,24 +23,21 @@ interface DashboardViewProps {
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
-  employees,
   selectedTemplate,
   onNavigate,
   onOpenPrintDialog,
 }) => {
-  const sampleCardEmployee: Employee =
-    employees.find((e) => e.msnv === '90993') ||
-    employees[0] || {
-      id: 'sample-hieu',
-      msnv: '90993',
-      fullName: 'TRƯƠNG MINH HIẾU',
-      department: 'Bảo trì vận hành',
-      joinDate: '02/10/2026',
-      photoUrl: '',
-      printCount: 1,
-      lastPrintedAt: '11/11/2026',
-      ownerId: '',
-    };
+  const sampleCardEmployee: Employee = {
+    id: 'sample-demo',
+    msnv: '06868',
+    fullName: 'TÊN NHÂN VIÊN',
+    department: 'Bảo trì vận hành',
+    joinDate: '02/10/2026',
+    photoUrl: '',
+    printCount: 0,
+    lastPrintedAt: '',
+    ownerId: '',
+  };
 
   return (
     <div className="max-w-3xl mx-auto">

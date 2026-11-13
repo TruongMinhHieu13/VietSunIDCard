@@ -748,7 +748,7 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
                         type="text"
                         value={quickMsnv}
                         onChange={(e) => setQuickMsnv(e.target.value)}
-                        placeholder="VD: 91005"
+                        placeholder="VD: 06868"
                         className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-mono-num focus:outline-none focus:border-blue-600"
                       />
                     </div>
@@ -772,7 +772,7 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
                         type="text"
                         value={quickFullName}
                         onChange={(e) => setQuickFullName(e.target.value)}
-                        placeholder="VD: NGUYỄN VĂN AN"
+                        placeholder="VD: TÊN NHÂN VIÊN"
                         className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-600"
                       />
                     </div>

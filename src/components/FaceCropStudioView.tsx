@@ -119,7 +119,7 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
 
   // Employee assignment state
   const [targetEmployeeId, setTargetEmployeeId] = useState<string>(
-    initialTargetEmployee?.id || (employees[0]?.id ?? '')
+    initialTargetEmployee?.id || ''
   );
   const [empSearchQuery, setEmpSearchQuery] = useState<string>('');
   const [isSavingToEmp, setIsSavingToEmp] = useState<boolean>(false);
@@ -153,10 +153,8 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
   useEffect(() => {
     if (initialTargetEmployee) {
       setTargetEmployeeId(initialTargetEmployee.id);
-    } else if (!targetEmployeeId && employees.length > 0) {
-      setTargetEmployeeId(employees[0].id);
     }
-  }, [initialTargetEmployee, employees, targetEmployeeId]);
+  }, [initialTargetEmployee]);
 
   const activePhotoItem = useMemo(
     () => photoQueue.find((item) => item.id === activePhotoId) || null,
@@ -271,8 +269,8 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
       .then((img) => {
         if (cancelled) return;
         setLoadedImage(img);
-        if (activePhotoItem.matchedEmployeeId && !initialTargetEmployee) {
-          setTargetEmployeeId(activePhotoItem.matchedEmployeeId);
+        if (!initialTargetEmployee) {
+          setTargetEmployeeId(activePhotoItem.matchedEmployeeId || '');
         }
         void runFaceDetectionOnImage(img, currentAspectRatio, activePhotoItem.id);
       })
@@ -440,8 +438,11 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
 
       setPhotoQueue((prev) => [...prev, ...newItems]);
       setActivePhotoId(newItems[0].id);
+      if (!initialTargetEmployee) {
+        setTargetEmployeeId(newItems[0].matchedEmployeeId || '');
+      }
     },
-    [findMatchingEmployeeByFileName]
+    [findMatchingEmployeeByFileName, initialTargetEmployee]
   );
 
   // Support Ctrl + V paste image anywhere on this view
@@ -764,7 +765,7 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
       } else {
         setStatusMessage({
           type: 'warning',
-          text: `Không tìm thấy nhân viên có MSNV trùng tên ảnh (${unmatchedFiles.slice(0, 4).join(', ')}). Vui lòng đặt tên file ảnh theo đúng MSNV (VD: 90993.jpg, 91051.png).`,
+          text: `Không tìm thấy nhân viên có MSNV trùng tên ảnh (${unmatchedFiles.slice(0, 4).join(', ')}). Vui lòng đặt tên file ảnh theo đúng MSNV (VD: 06868.jpg, 91051.png).`,
         });
       }
     } finally {
@@ -795,8 +796,8 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
     }
     return {
       id: 'preview_ai_crop',
-      msnv: '90993',
-      fullName: 'TRƯƠNG MINH HIẾU',
+      msnv: '06868',
+      fullName: 'TÊN NHÂN VIÊN',
       department: 'Bảo trì vận hành',
       joinDate: '02/10/2026',
       photoUrl: croppedDataUrl,
@@ -1675,16 +1676,13 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                   onChange={(e) => setTargetEmployeeId(e.target.value)}
                   className="w-full px-3 py-2 text-xs font-semibold bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-blue-600"
                 >
-                  {filteredEmployees.length === 0 ? (
-                    <option value="">-- Không tìm thấy nhân viên --</option>
-                  ) : (
-                    filteredEmployees.map((emp) => (
-                      <option key={emp.id} value={emp.id}>
-                        {emp.msnv} — {emp.fullName} ({emp.department})
-                        {emp.photoUrl ? ' [Đã có ảnh]' : ' [Chưa có ảnh]'}
-                      </option>
-                    ))
-                  )}
+                  <option value="">Chọn công nhân</option>
+                  {filteredEmployees.map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.msnv} — {emp.fullName} ({emp.department})
+                      {emp.photoUrl ? ' [Đã có ảnh]' : ' [Chưa có ảnh]'}
+                    </option>
+                  ))}
                 </select>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
@@ -1895,7 +1893,7 @@ export const DirectMsnvDropModal: React.FC<DirectMsnvDropModalProps> = ({
                 Thêm Ảnh Thẳng Theo MSNV (Không Cần Preview)
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Kéo thả 1 hoặc nhiều ảnh có tên file là <strong>MSNV</strong> (VD: <code className="font-mono-num bg-slate-100 px-1 rounded">90993.jpg</code>, <code className="font-mono-num bg-slate-100 px-1 rounded">00441.png</code>) để gán thẳng vào nhân viên tương ứng
+                Kéo thả 1 hoặc nhiều ảnh có tên file là <strong>MSNV</strong> (VD: <code className="font-mono-num bg-slate-100 px-1 rounded">06868.jpg</code>, <code className="font-mono-num bg-slate-100 px-1 rounded">00441.png</code>) để gán thẳng vào nhân viên tương ứng
               </p>
             </div>
           </div>
@@ -1936,7 +1934,7 @@ export const DirectMsnvDropModal: React.FC<DirectMsnvDropModalProps> = ({
             Kéo thả các file ảnh vào khung này
           </div>
           <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-            Tên mỗi file ảnh phải trùng với <strong>MSNV</strong> của nhân viên (ví dụ: <code className="font-mono-num text-slate-700">90993.jpg</code>). Hệ thống sẽ tự động chuẩn hóa 3×4 (354×472 px) và báo lỗi nếu có hình nhập sai.
+            Tên mỗi file ảnh phải trùng với <strong>MSNV</strong> của nhân viên (ví dụ: <code className="font-mono-num text-slate-700">06868.jpg</code>). Hệ thống sẽ tự động chuẩn hóa 3×4 (354×472 px) và báo lỗi nếu có hình nhập sai.
           </p>
 
           <label className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl cursor-pointer shadow-xs transition-colors">

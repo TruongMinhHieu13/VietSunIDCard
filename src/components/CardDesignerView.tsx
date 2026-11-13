@@ -37,9 +37,7 @@ export const CardDesignerView: React.FC<CardDesignerViewProps> = ({
   employees,
 }) => {
   const [draft, setDraft] = useState<CardTemplate>(selectedTemplate);
-  const [previewEmployeeId, setPreviewEmployeeId] = useState<string>(
-    employees[0]?.id || ''
-  );
+  const [previewEmployeeId, setPreviewEmployeeId] = useState<string>('sample');
   const [previewScale, setPreviewScale] = useState<number>(1.6);
   const [activeSubTab, setActiveSubTab] = useState<
     'layout' | 'typography' | 'position'
@@ -53,19 +51,22 @@ export const CardDesignerView: React.FC<CardDesignerViewProps> = ({
     setSaveMessage(null);
   };
 
+  const sampleDemoEmployee: Employee = {
+    id: 'sample',
+    msnv: '06868',
+    fullName: 'TÊN NHÂN VIÊN',
+    department: 'Bảo trì vận hành',
+    joinDate: '02/10/2026',
+    photoUrl: '',
+    printCount: 0,
+    lastPrintedAt: '',
+    ownerId: '',
+  };
+
   const previewEmployee: Employee =
-    employees.find((e) => e.id === previewEmployeeId) ||
-    employees[0] || {
-      id: 'sample',
-      msnv: '90993',
-      fullName: 'TRƯƠNG MINH HIẾU',
-      department: 'Bảo trì vận hành',
-      joinDate: '02/10/2026',
-      photoUrl: '',
-      printCount: 1,
-      lastPrintedAt: '11/11/2026',
-      ownerId: '',
-    };
+    previewEmployeeId === 'sample'
+      ? sampleDemoEmployee
+      : employees.find((e) => e.id === previewEmployeeId) || sampleDemoEmployee;
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -751,6 +752,7 @@ export const CardDesignerView: React.FC<CardDesignerViewProps> = ({
                   onChange={(e) => setPreviewEmployeeId(e.target.value)}
                   className="px-2.5 py-1.5 text-xs font-semibold border border-slate-300 rounded-lg bg-slate-50"
                 >
+                  <option value="sample">06868 - TÊN NHÂN VIÊN (Demo)</option>
                   {employees.map((emp) => (
                     <option key={emp.id} value={emp.id}>
                       {emp.msnv} - {emp.fullName}

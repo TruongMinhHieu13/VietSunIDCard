@@ -306,7 +306,7 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
         );
       } else {
         setPhotoStatusBanner(
-          `Không tìm thấy nhân viên có MSNV trùng tên file ảnh (${unmatchedFiles.slice(0, 3).join(', ')}). Mẹo: Đặt tên ảnh là MSNV (VD: 90993.jpg).`
+          `Không tìm thấy nhân viên có MSNV trùng tên file ảnh (${unmatchedFiles.slice(0, 3).join(', ')}). Mẹo: Đặt tên ảnh là MSNV (VD: 06868.jpg).`
         );
       }
       setTimeout(() => setPhotoStatusBanner(null), 6500);
@@ -628,7 +628,7 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
               Chưa có dữ liệu nhân viên trong hệ thống
             </div>
             <p className="text-xs text-slate-500 max-w-md mx-auto">
-              Bạn có thể bấm &quot;IMPORT EXCEL&quot; để tải danh sách nhân viên từ file Excel, thêm từng nhân viên mới, hoặc nạp bộ dữ liệu mẫu chuẩn của VIETSUN ĐỒNG NAI (bao gồm thẻ mẫu Trương Minh Hiếu - 90993).
+              Bạn có thể bấm &quot;IMPORT EXCEL&quot; để tải danh sách nhân viên từ file Excel, thêm từng nhân viên mới, hoặc nạp bộ dữ liệu mẫu chuẩn của VIETSUN ĐỒNG NAI (bao gồm thẻ mẫu TÊN NHÂN VIÊN - 06868).
             </p>
             <div className="flex items-center justify-center gap-3 pt-2">
               <button
@@ -872,7 +872,7 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
                     required
                     value={msnv}
                     onChange={(e) => setMsnv(e.target.value)}
-                    placeholder="VD: 90993"
+                    placeholder="VD: 06868"
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono-num focus:outline-none focus:border-blue-600"
                   />
                 </div>
@@ -901,7 +901,7 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
                   required
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  placeholder="VD: TRƯƠNG MINH HIẾU"
+                  placeholder="VD: TÊN NHÂN VIÊN"
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-600"
                 />
               </div>
