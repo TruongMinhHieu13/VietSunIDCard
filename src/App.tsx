@@ -230,25 +230,38 @@ export default function App() {
         }
       }
 
-      // 1. Employees (Clean up any leftover 06868 / TÊN NHÂN VIÊN test card record from database)
-      const shouldCleanTest06868 =
-        typeof window !== 'undefined' &&
-        localStorage.getItem('vietsun_cleanup_test_06868_v1') !== 'done';
-      if (shouldCleanTest06868 && typeof window !== 'undefined') {
-        localStorage.setItem('vietsun_cleanup_test_06868_v1', 'done');
-      }
-
+      // 1. Employees — Restore 90993 (TRƯƠNG MINH HIẾU) if it was previously overwritten to 06868 / TÊN NHÂN VIÊN or deleted
       const todayFallback = new Date().toLocaleDateString('vi-VN');
       const empList: Employee[] = [];
+      let has90993 = false;
+
       for (const d of empSnap.docs) {
         const raw = d.data() as Omit<Employee, 'id'>;
-        const isTestDemoCard =
+        const isOverwritten90993 =
           raw.msnv?.trim() === '06868' ||
           raw.fullName?.trim().toUpperCase() === 'TÊN NHÂN VIÊN';
 
-        if (isTestDemoCard && shouldCleanTest06868) {
-          deleteDoc(doc(db, 'employees', d.id)).catch(() => {});
-          continue;
+        const restoredMsnv = isOverwritten90993 ? '90993' : raw.msnv;
+        const restoredFullName = isOverwritten90993
+          ? 'TRƯƠNG MINH HIẾU'
+          : raw.fullName;
+        const restoredDept =
+          isOverwritten90993 &&
+          (!raw.department || raw.department === 'Bảo trì vận hành')
+            ? 'BP. Bảo trì vận hành'
+            : raw.department;
+
+        if (restoredMsnv?.trim() === '90993') {
+          has90993 = true;
+        }
+
+        if (isOverwritten90993) {
+          updateDoc(doc(db, 'employees', d.id), {
+            msnv: restoredMsnv,
+            fullName: restoredFullName,
+            department: restoredDept,
+            updatedAt: serverTimestamp(),
+          }).catch(() => {});
         }
 
         const effectivePrintCount = shouldMarkAllPrintedOnce
@@ -261,10 +274,53 @@ export default function App() {
         empList.push({
           id: d.id,
           ...raw,
+          msnv: restoredMsnv,
+          fullName: restoredFullName,
+          department: restoredDept,
           printCount: effectivePrintCount,
           lastPrintedAt: effectiveLastPrintedAt,
         });
       }
+
+      // If 90993 was deleted when cleaning up 06868 earlier, restore 90993 once automatically
+      const shouldRestore90993Once =
+        !has90993 &&
+        empList.length > 0 &&
+        typeof window !== 'undefined' &&
+        localStorage.getItem('vietsun_restore_90993_once_v1') !== 'done';
+
+      if (shouldRestore90993Once) {
+        localStorage.setItem('vietsun_restore_90993_once_v1', 'done');
+        const restoredId = generateSafeId('emp');
+        const nowMs = Date.now();
+        const restoredEmp: Employee = {
+          id: restoredId,
+          msnv: '90993',
+          fullName: 'TRƯƠNG MINH HIẾU',
+          department: 'BP. Bảo trì vận hành',
+          joinDate: '02/10/2025',
+          photoUrl: '',
+          printCount: 1,
+          lastPrintedAt: todayFallback,
+          ownerId: WORKSPACE_ID,
+          createdAt: nowMs,
+          updatedAt: nowMs,
+        };
+        empList.unshift(restoredEmp);
+        setDoc(doc(db, 'employees', restoredId), {
+          msnv: restoredEmp.msnv,
+          fullName: restoredEmp.fullName,
+          department: restoredEmp.department,
+          joinDate: restoredEmp.joinDate,
+          photoUrl: restoredEmp.photoUrl,
+          printCount: 1,
+          lastPrintedAt: todayFallback,
+          ownerId: WORKSPACE_ID,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }).catch(() => {});
+      }
+
       empList.sort(sortEmployeesNewestFirst);
       setEmployees(empList);
 

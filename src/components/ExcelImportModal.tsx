@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import {
   FileSpreadsheet,
   Download,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Employee } from '../types';
 import { compressImageTo3x4DataUrl } from './EmployeeManagementView';
+import { VIETSUN_LOGO_BASE64 } from '../utils/vietsunLogoBase64';
 
 export interface ParsedExcelRow {
   rowNumber: number;
@@ -167,205 +169,186 @@ function readCellDate(worksheet: XLSX.WorkSheet, r: number, c: number): string {
   return '';
 }
 
-export function downloadSampleExcelTemplate() {
-  // Exact layout matching user's VietSun Excel file:
-  // Row 1-2: VIETSUN | DANH SÁCH CÁN BỘ CÔNG NHÂN VIÊN
-  // Row 3-4 (merged): STT (Col A) | [B, C, D hidden] | PHÒNG BAN CON (Col E) | MSNV (Col F) | HỌ (Col G) | TÊN (Col H) | CÔNG VIỆC (Col I) | NGÀY VÀO (Col J)
-  // Row 5: No | Bophancon6 | Manhanvien2222 | Ho | Ten | Congviec | Ngayvaocty
-  // Row 6+: Data rows
-  const aoa: unknown[][] = [
-    [
-      'VIETSUN',
-      '',
-      '',
-      '',
-      '',
-      '',
-      'DANH SÁCH CÁN BỘ CÔNG NHÂN VIÊN',
-      '',
-      '',
-      '',
-    ],
-    ['Warming Your Life', '', '', '', '', '', '', '', '', ''],
-    [
-      'STT',
-      'ĐƠN VỊ',
-      'KHỐI',
-      'PHÒNG BAN',
-      'PHÒNG BAN CON',
-      'MSNV',
-      'HỌ',
-      'TÊN',
-      'CÔNG VIỆC',
-      'NGÀY VÀO',
-    ],
-    ['', '', '', '', '', '', '', '', '', ''],
-    [
-      'No',
-      'Donvi',
-      'Khoi',
-      'Bophan5',
-      'Bophancon6',
-      'Manhanvien2222',
-      'Ho',
-      'Ten',
-      'Congviec',
-      'Ngayvaocty',
-    ],
-    [
-      1,
-      'VIETSUN',
-      'VP',
-      'BGĐ',
-      'BGĐ',
-      '10448',
-      'Đỗ Đăng Quốc',
-      'Huy',
-      'Giám đốc Điều hành',
-      '01/09/2025',
-    ],
-    [
-      2,
-      'VIETSUN',
-      'VP',
-      'Phòng Bảo trì vận hành',
-      'BP. Bảo trì vận hành',
-      '00455',
-      'Bùi Nhật',
-      'Duy',
-      'Nhân viên IT',
-      '21/10/2025',
-    ],
-    [
-      3,
-      'VIETSUN',
-      'VP',
-      'Phòng Bảo trì vận hành',
-      'BP. Bảo trì vận hành',
-      '90063',
-      'Phạm Văn',
-      'Hiếu',
-      'Nhân viên bảo trì vận hành',
-      '03/09/2025',
-    ],
-  ];
-
-  const worksheet = XLSX.utils.aoa_to_sheet(aoa);
-  worksheet['!merges'] = [
-    { s: { r: 0, c: 6 }, e: { r: 1, c: 9 } }, // DANH SÁCH CÁN BỘ CÔNG NHÂN VIÊN
-    { s: { r: 2, c: 0 }, e: { r: 3, c: 0 } }, // STT (A3:A4)
-    { s: { r: 2, c: 4 }, e: { r: 3, c: 4 } }, // PHÒNG BAN CON (E3:E4)
-    { s: { r: 2, c: 5 }, e: { r: 3, c: 5 } }, // MSNV (F3:F4)
-    { s: { r: 2, c: 6 }, e: { r: 3, c: 6 } }, // HỌ (G3:G4)
-    { s: { r: 2, c: 7 }, e: { r: 3, c: 7 } }, // TÊN (H3:H4)
-    { s: { r: 2, c: 8 }, e: { r: 3, c: 8 } }, // CÔNG VIỆC (I3:I4)
-    { s: { r: 2, c: 9 }, e: { r: 3, c: 9 } }, // NGÀY VÀO (J3:J4)
-  ];
-  worksheet['!cols'] = [
-    { wch: 6 }, // A: STT (No)
-    { wch: 10, hidden: true }, // B: ẩn
-    { wch: 10, hidden: true }, // C: ẩn
-    { wch: 16, hidden: true }, // D: ẩn
-    { wch: 22 }, // E: PHÒNG BAN CON (Bophancon6)
-    { wch: 14 }, // F: MSNV (Manhanvien2222)
-    { wch: 20 }, // G: HỌ (Ho)
-    { wch: 10 }, // H: TÊN (Ten)
-    { wch: 34 }, // I: CÔNG VIỆC (Congviec)
-    { wch: 14 }, // J: NGÀY VÀO (Ngayvaocty)
-  ];
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'DanhSachNhanVien');
-  XLSX.writeFile(workbook, 'File_Mau_Import_Nhan_Vien_VietSun.xlsx');
+function getFormattedStringTime(): string {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mi = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  return `${yyyy}${mm}${dd}_${hh}${mi}${ss}`;
 }
 
-export function exportEmployeesToExcel(employees: Employee[]) {
-  const aoa: unknown[][] = [
-    [
-      'VIETSUN',
-      '',
-      '',
-      '',
-      '',
-      '',
-      'DANH SÁCH CÁN BỘ CÔNG NHÂN VIÊN',
-      '',
-      '',
-      '',
-    ],
-    ['Warming Your Life', '', '', '', '', '', '', '', '', ''],
-    [
-      'STT',
-      'ĐƠN VỊ',
-      'KHỐI',
-      'PHÒNG BAN',
-      'PHÒNG BAN CON',
-      'MSNV',
-      'HỌ',
-      'TÊN',
-      'CÔNG VIỆC',
-      'NGÀY VÀO',
-    ],
-    ['', '', '', '', '', '', '', '', '', ''],
-    [
-      'No',
-      'Donvi',
-      'Khoi',
-      'Bophan5',
-      'Bophancon6',
-      'Manhanvien2222',
-      'Ho',
-      'Ten',
-      'Congviec',
-      'Ngayvaocty',
-    ],
-  ];
+function triggerBlobDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
 
-  employees.forEach((emp, idx) => {
-    const parts = emp.fullName.trim().split(/\s+/);
-    const ten = parts.length > 1 ? parts[parts.length - 1] : emp.fullName;
-    const ho = parts.length > 1 ? parts.slice(0, -1).join(' ') : '';
-    aoa.push([
-      idx + 1,
-      'VIETSUN',
-      '',
-      emp.department,
-      emp.department,
-      emp.msnv,
-      ho,
-      ten,
-      '',
-      emp.joinDate,
-    ]);
+async function buildVietSunWorkbookBuffer(
+  dataRows: Array<Array<string | number | null>>
+): Promise<ExcelJS.Buffer> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'VietSun HR';
+  wb.created = new Date();
+  wb.modified = new Date();
+
+  const ws = wb.addWorksheet('DanhSachNhanVien', {
+    views: [{ showGridLines: true }],
   });
 
-  const worksheet = XLSX.utils.aoa_to_sheet(aoa);
-  worksheet['!merges'] = [
-    { s: { r: 0, c: 6 }, e: { r: 1, c: 9 } },
-    { s: { r: 2, c: 0 }, e: { r: 3, c: 0 } },
-    { s: { r: 2, c: 4 }, e: { r: 3, c: 4 } },
-    { s: { r: 2, c: 5 }, e: { r: 3, c: 5 } },
-    { s: { r: 2, c: 6 }, e: { r: 3, c: 6 } },
-    { s: { r: 2, c: 7 }, e: { r: 3, c: 7 } },
-    { s: { r: 2, c: 8 }, e: { r: 3, c: 8 } },
-    { s: { r: 2, c: 9 }, e: { r: 3, c: 9 } },
+  ws.columns = [
+    { key: 'stt', width: 6.5 },
+    { key: 'dept', width: 19.5 },
+    { key: 'msnv', width: 14 },
+    { key: 'ho', width: 21 },
+    { key: 'ten', width: 10.5 },
+    { key: 'job', width: 38 },
+    { key: 'date', width: 13.5 },
   ];
-  worksheet['!cols'] = [
-    { wch: 6 }, // A: STT
-    { wch: 10, hidden: true }, // B
-    { wch: 10, hidden: true }, // C
-    { wch: 16, hidden: true }, // D
-    { wch: 22 }, // E: PHÒNG BAN CON
-    { wch: 14 }, // F: MSNV
-    { wch: 20 }, // G: HỌ
-    { wch: 10 }, // H: TÊN
-    { wch: 30 }, // I: CÔNG VIỆC
-    { wch: 14 }, // J: NGÀY VÀO
+
+  // Merge A1:G2 for clean top header area & title
+  ws.mergeCells('A1:G2');
+  const titleCell = ws.getCell('A1');
+  titleCell.value = 'DANH SÁCH CÁN BỘ CÔNG NHÂN VIÊN';
+  titleCell.font = {
+    name: 'Times New Roman',
+    size: 14,
+    bold: true,
+    color: { argb: 'FF000000' },
+  };
+  titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+  titleCell.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FFFFFFFF' },
+  };
+
+  ws.getRow(1).height = 24;
+  ws.getRow(2).height = 24;
+
+  // Embed VIETSUN logo at top-left (using integer col/row anchor for strict Excel compatibility)
+  const logoId = wb.addImage({
+    base64: VIETSUN_LOGO_BASE64,
+    extension: 'png',
+  });
+  ws.addImage(logoId, {
+    tl: { col: 0, row: 0 },
+    ext: { width: 122, height: 50 },
+  });
+
+  const thinBorder: Partial<ExcelJS.Borders> = {
+    top: { style: 'thin', color: { argb: 'FF000000' } },
+    left: { style: 'thin', color: { argb: 'FF000000' } },
+    bottom: { style: 'thin', color: { argb: 'FF000000' } },
+    right: { style: 'thin', color: { argb: 'FF000000' } },
+  };
+
+  // Row 3: Vietnamese Header
+  const headersVn = [
+    'STT',
+    'PHÒNG BAN CON',
+    'MSNV',
+    'HỌ',
+    'TÊN',
+    'CÔNG VIỆC',
+    'NGÀY VÀO',
   ];
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'DanhSachNhanVien');
-  XLSX.writeFile(
-    workbook,
-    `Danh_Sach_Nhan_Vien_${new Date().toISOString().slice(0, 10)}.xlsx`
+  const row3 = ws.getRow(3);
+  row3.height = 28;
+  headersVn.forEach((text, idx) => {
+    const cell = row3.getCell(idx + 1);
+    cell.value = text;
+    cell.font = { name: 'Times New Roman', size: 11, bold: true };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.border = thinBorder;
+  });
+
+  // Row 4: Code Sub-Header
+  const headersCode = [
+    'No',
+    'Bophancon6',
+    'Manhanvien22222',
+    'Ho',
+    'Ten',
+    'Congviec',
+    'Ngayvaocty',
+  ];
+  const row4 = ws.getRow(4);
+  row4.height = 19;
+  headersCode.forEach((text, idx) => {
+    const cell = row4.getCell(idx + 1);
+    cell.value = text;
+    cell.font = { name: 'Times New Roman', size: 11, italic: true };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.border = thinBorder;
+  });
+
+  // Rows 5+: Data or empty template rows
+  dataRows.forEach((vals, rowIdx) => {
+    const row = ws.getRow(5 + rowIdx);
+    row.height = 19;
+    for (let c = 1; c <= 7; c++) {
+      const cell = row.getCell(c);
+      const v = vals[c - 1];
+      cell.value = v === undefined || v === '' ? null : v;
+      cell.font = { name: 'Times New Roman', size: 11 };
+      cell.alignment = {
+        horizontal: c === 1 || c === 3 || c === 7 ? 'center' : 'left',
+        vertical: 'middle',
+      };
+      cell.border = thinBorder;
+    }
+  });
+
+  return await wb.xlsx.writeBuffer();
+}
+
+export async function downloadSampleExcelTemplate() {
+  const emptyTemplateRows: Array<Array<string | number | null>> = Array.from(
+    { length: 14 },
+    () => [null, null, null, null, null, null, null]
+  );
+  const buffer = await buildVietSunWorkbookBuffer(emptyTemplateRows);
+  const stringTime = getFormattedStringTime();
+  triggerBlobDownload(
+    new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    }),
+    `FileMauLamTheNV_${stringTime}.xlsx`
+  );
+}
+
+export async function exportEmployeesToExcel(employees: Employee[]) {
+  const rows: Array<Array<string | number | null>> = employees.map(
+    (emp, idx) => {
+      const parts = emp.fullName.trim().split(/\s+/);
+      const ten = parts.length > 1 ? parts[parts.length - 1] : emp.fullName;
+      const ho = parts.length > 1 ? parts.slice(0, -1).join(' ') : '';
+      return [
+        idx + 1,
+        emp.department || null,
+        emp.msnv || null,
+        ho || null,
+        ten || null,
+        null,
+        emp.joinDate || null,
+      ];
+    }
+  );
+  const buffer = await buildVietSunWorkbookBuffer(rows);
+  const stringTime = getFormattedStringTime();
+  triggerBlobDownload(
+    new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    }),
+    `DanhSachNhanVien_${stringTime}.xlsx`
   );
 }
 
