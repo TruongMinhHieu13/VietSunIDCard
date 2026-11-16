@@ -1,13 +1,36 @@
-import { FaceDetector, FilesetResolver } from '@mediapipe/tasks-vision';
+import {
+  FaceDetector,
+  ImageSegmenter,
+  FilesetResolver,
+} from '@mediapipe/tasks-vision';
 
 export type AutoCropMethod = 'A' | 'B' | 'A2' | 'C';
+
+/**
+ * Backdrop mode (`--phong` from specification):
+ * - 'trang': White backdrop (#FFFFFF)
+ * - 'xanh': Standard ID photo blue backdrop (#2361B8)
+ * - 'ca-hai': Both white & blue (default for Method C, outputs 2 files)
+ * - 'giu': Keep original background
+ * - 'custom': Custom hex color (#RRGGBB)
+ */
+export type BackdropMode = 'trang' | 'xanh' | 'ca-hai' | 'giu' | 'custom';
+
+export interface CauHinhAnhThe {
+  muc: 0 | 1 | 2 | 3;
+  phong: BackdropMode;
+  customHex: string;
+  epPhong: boolean;
+  giuDau: boolean;
+  boVien: number;
+}
 
 export type Point2D = [number, number];
 export type QuadCorners = [Point2D, Point2D, Point2D, Point2D]; // [tl, tr, br, bl]
 
 export interface DetectedFaceBox {
   id: number;
-  /** Bounding box in original image pixel coordinates */
+  /** Bounding box in original image pixel coordinates (normalized to canonical Haar head/face geometry) */
   x: number;
   y: number;
   width: number;
@@ -71,11 +94,22 @@ export interface CropTransformConfig {
   normalizedFaceInCard?: [number, number, number, number];
   /** Sampled white paper RGB [R, G, B] surrounding the card for white balance */
   surroundingPaperRgb?: [number, number, number] | null;
+  /** Backdrop replacement mode (--phong: trang | xanh | ca-hai | giu | custom #RRGGBB) */
+  backdropMode?: BackdropMode;
+  /** Custom hex color (#RRGGBB) when backdropMode === 'custom' */
+  customBackdropHex?: string;
+  /** Force backdrop replacement even for ID cards that already have a backdrop (--ep-phong) */
+  forceBackdrop?: boolean;
+  /** Precomputed person alpha matte (354 x 472 Float32Array in [0..1]) for instant backdrop switching */
+  personAlphaMatte?: Float32Array;
 }
 
 /** Standard 3x4 cm @ 300 DPI dimensions in pixels (from anh_the.py) */
 export const OUTPUT_3X4_WIDTH_PX = 354;
 export const OUTPUT_3X4_HEIGHT_PX = 472;
+
+export const STANDARD_ID_BLUE_HEX = '#2361B8';
+export const STANDARD_ID_WHITE_HEX = '#FFFFFF';
 
 // Exact constants from anh_the.py
 export const TI_LE = 3 / 4; // rộng / cao
@@ -89,49 +123,203 @@ export const MEP_NGUONG = 12.0; // độ dốc sáng-tối tối thiểu cho đi
 export const SO_MAT_THU = 6; // số khuôn mặt ứng viên đem thử
 export const DEFAULT_BO_VIEN = 0.012; // tỉ lệ mép cắt bỏ thêm để hết viền trắng
 
+const CAU_HINH_STORAGE_KEY = 'vietsun_anh_the_cau_hinh_v3';
+
+export function formatCauHinhTxt(cfg: CauHinhAnhThe): string {
+  const phongStr =
+    cfg.phong === 'custom' ? cfg.customHex || '#2361B8' : cfg.phong;
+  return [
+    '# Cấu hình mặc định công cụ cắt ảnh thẻ 3x4 (cau_hinh.txt)',
+    '# Mức chỉnh đẹp (--muc): 0 = giữ nguyên, 1 = nhẹ, 2 = vừa (mặc định), 3 = mạnh',
+    `muc = ${cfg.muc}`,
+    '',
+    '# Màu phông nền khi tách người khỏi nền (--phong):',
+    '# giu (mặc định, giữ nền cũ) | trang | xanh | ca-hai (xuất 2 file) | #RRGGBB',
+    `phong = ${phongStr}`,
+    '',
+    '# Ép đổi phông cho cả ảnh thẻ đã có phông sẵn (--ep-phong): true | false',
+    `ep_phong = ${cfg.epPhong ? 'true' : 'false'}`,
+    '',
+    '# Giữ dấu đỏ đè lên ảnh thẻ (--giu-dau): true | false',
+    `giu_dau = ${cfg.giuDau ? 'true' : 'false'}`,
+    '',
+    '# Tỉ lệ cắt bỏ viền mép (--bo-vien): mặc định 0.012',
+    `bo_vien = ${cfg.boVien}`,
+    '',
+  ].join('\n');
+}
+
+export function parseCauHinhTxt(text: string): CauHinhAnhThe {
+  const base: CauHinhAnhThe = {
+    muc: 2,
+    phong: 'giu',
+    customHex: STANDARD_ID_BLUE_HEX,
+    epPhong: false,
+    giuDau: false,
+    boVien: DEFAULT_BO_VIEN,
+  };
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eqIdx = line.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = line.slice(0, eqIdx).trim().toLowerCase();
+    const val = line.slice(eqIdx + 1).trim();
+    if (key === 'muc' || key === '--muc') {
+      const n = Number(val);
+      if (n === 0 || n === 1 || n === 2 || n === 3) base.muc = n;
+    } else if (key === 'phong' || key === '--phong') {
+      const vLow = val.toLowerCase();
+      if (
+        vLow === 'trang' ||
+        vLow === 'xanh' ||
+        vLow === 'ca-hai' ||
+        vLow === 'giu'
+      ) {
+        base.phong = vLow;
+      } else if (/^#[0-9a-fA-F]{6}$/.test(val)) {
+        base.phong = 'custom';
+        base.customHex = val.toUpperCase();
+      }
+    } else if (key === 'ep_phong' || key === '--ep-phong') {
+      base.epPhong = val.toLowerCase() === 'true' || val === '1';
+    } else if (key === 'giu_dau' || key === '--giu-dau') {
+      base.giuDau = val.toLowerCase() === 'true' || val === '1';
+    } else if (key === 'bo_vien' || key === '--bo-vien') {
+      const bv = Number(val);
+      if (!Number.isNaN(bv) && bv >= 0 && bv <= 0.08) base.boVien = bv;
+    }
+  }
+  return base;
+}
+
+export function loadDefaultCauHinh(): CauHinhAnhThe {
+  const fallback: CauHinhAnhThe = {
+    muc: 2,
+    phong: 'giu',
+    customHex: STANDARD_ID_BLUE_HEX,
+    epPhong: false,
+    giuDau: false,
+    boVien: DEFAULT_BO_VIEN,
+  };
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const raw = localStorage.getItem(CAU_HINH_STORAGE_KEY);
+    if (!raw) {
+      // Auto-create cau_hinh.txt on first run
+      localStorage.setItem(CAU_HINH_STORAGE_KEY, formatCauHinhTxt(fallback));
+      return fallback;
+    }
+    return parseCauHinhTxt(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+export function saveDefaultCauHinh(cfg: CauHinhAnhThe): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(CAU_HINH_STORAGE_KEY, formatCauHinhTxt(cfg));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+let visionFilesetPromise: Promise<
+  Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>
+> | null = null;
+
+async function getVisionFileset() {
+  if (!visionFilesetPromise) {
+    visionFilesetPromise = (async () => {
+      try {
+        return await FilesetResolver.forVisionTasks('/wasm');
+      } catch {
+        return await FilesetResolver.forVisionTasks(
+          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.2.3/wasm'
+        );
+      }
+    })();
+  }
+  return visionFilesetPromise;
+}
+
 let mediaPipeDetectorPromise: Promise<FaceDetector | null> | null = null;
 
 /**
- * Lazily initializes Google MediaPipe BlazeFace AI detector in browser WASM.
+ * Lazily initializes Google MediaPipe BlazeFace AI detector using bundled local WASM & model (`/models/blaze_face_short_range.tflite`).
  */
 export async function getMediaPipeFaceDetector(): Promise<FaceDetector | null> {
   if (!mediaPipeDetectorPromise) {
     mediaPipeDetectorPromise = (async () => {
       try {
-        const vision = await FilesetResolver.forVisionTasks(
-          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
-        );
-        return await FaceDetector.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath:
-              'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',
-          },
-          runningMode: 'IMAGE',
-          minDetectionConfidence: 0.25,
-        });
-      } catch (err) {
-        console.warn('MediaPipe primary CDN failed, trying fallback:', err);
+        const vision = await getVisionFileset();
         try {
-          const visionFallback = await FilesetResolver.forVisionTasks(
-            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm'
-          );
-          return await FaceDetector.createFromOptions(visionFallback, {
+          return await FaceDetector.createFromOptions(vision, {
             baseOptions: {
-              modelAssetPath:
-                'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',
+              modelAssetPath: '/models/blaze_face_short_range.tflite',
+              delegate: 'CPU',
             },
             runningMode: 'IMAGE',
-            minDetectionConfidence: 0.25,
+            minDetectionConfidence: 0.3,
           });
-        } catch (fallbackErr) {
-          console.warn('MediaPipe initialization unavailable:', fallbackErr);
-          mediaPipeDetectorPromise = null;
-          return null;
+        } catch {
+          return await FaceDetector.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: '/models/blaze_face_short_range.tflite',
+            },
+            runningMode: 'IMAGE',
+            minDetectionConfidence: 0.3,
+          });
         }
+      } catch (err) {
+        console.warn('MediaPipe FaceDetector initialization unavailable:', err);
+        mediaPipeDetectorPromise = null;
+        return null;
       }
     })();
   }
   return mediaPipeDetectorPromise;
+}
+
+let mediaPipeSegmenterPromise: Promise<ImageSegmenter | null> | null = null;
+
+/**
+ * Lazily initializes neural Portrait Segmenter (`/models/selfie_segmenter.tflite`, offline MODNet-equivalent in browser WASM).
+ */
+export async function getMediaPipeImageSegmenter(): Promise<ImageSegmenter | null> {
+  if (!mediaPipeSegmenterPromise) {
+    mediaPipeSegmenterPromise = (async () => {
+      try {
+        const vision = await getVisionFileset();
+        try {
+          return await ImageSegmenter.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: '/models/selfie_segmenter.tflite',
+              delegate: 'CPU',
+            },
+            runningMode: 'IMAGE',
+            outputConfidenceMasks: true,
+            outputCategoryMask: false,
+          });
+        } catch {
+          return await ImageSegmenter.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: '/models/selfie_segmenter.tflite',
+            },
+            runningMode: 'IMAGE',
+            outputConfidenceMasks: true,
+            outputCategoryMask: false,
+          });
+        }
+      } catch (err) {
+        console.warn('MediaPipe ImageSegmenter unavailable:', err);
+        mediaPipeSegmenterPromise = null;
+        return null;
+      }
+    })();
+  }
+  return mediaPipeSegmenterPromise;
 }
 
 // ============================================================================
@@ -914,11 +1102,10 @@ export function timKhungTheoPhong(
       [gocLocal[3][0] / k + x0, gocLocal[3][1] / k + y0],
     ];
 
-    const outOfBounds = gocGlobal.some(
-      (pt) =>
-        pt[0] < -le || pt[0] > W + le || pt[1] < -le || pt[1] > H + le
-    );
-    if (outOfBounds) continue;
+    // Ensure the detected card does not simply span the entire image frame
+    // (a direct portrait photo against a colored wall fills >75% of the frame or touches the border)
+    const cardArea = polygonArea2D(gocGlobal);
+    if (cardArea > 0.76 * W * H) continue;
 
     return { corners: gocGlobal, doMau: cand.doMau };
   }
@@ -967,7 +1154,7 @@ export function timKhungTheoMep(
   const cx = mx + F / 2;
   const cy = my + F / 2;
 
-  // Grayscale + 3x3 Gaussian blur
+  // Grayscale + 3x3 Gaussian blur + LAB chromatic channels for subtle white-on-paper edges
   const grayRaw = new Float32Array(vw * vh);
   for (let i = 0; i < vw * vh; i++) {
     const idx = i * 4;
@@ -1021,6 +1208,7 @@ export function timKhungTheoMep(
   const ya = Math.max(0, Math.floor(my - 0.3 * F));
   const yb = Math.min(vh, Math.floor(my + 1.4 * F));
   if (yb - ya < 1.2 * F) return null;
+  const yMid = Math.floor((ya + yb) / 2);
 
   const chon = (
     doPhu: Float32Array,
@@ -1035,8 +1223,8 @@ export function timKhungTheoMep(
     for (let i = a; i < b; i++) {
       if (doPhu[i] > cMax) cMax = doPhu[i];
     }
-    if (cMax < 0.5) return null;
-    const thresh = Math.max(0.5, 0.88 * cMax);
+    if (cMax < 0.52) return null;
+    const thresh = Math.max(0.52, 0.88 * cMax);
     const ro: number[] = [];
     for (let i = a; i < b; i++) {
       if (doPhu[i] >= thresh) ro.push(i);
@@ -1058,55 +1246,84 @@ export function timKhungTheoMep(
     const s = Math.tan((doDeg * Math.PI) / 180);
 
     // Column coverage of sheared vertical edge map in [ya, yb)
+    // STRICT CHECK: A true card vertical edge must have strong coverage in BOTH
+    // the upper half (beside the head) AND the lower half (beside the shoulders),
+    // preventing hair or shoulder contours on a white background from being mistaken for a card border!
     const phuDoc = new Float32Array(vw);
     const spanY = yb - ya;
+    const spanUpper = Math.max(1, yMid - ya);
+    const spanLower = Math.max(1, yb - yMid);
+
     for (let xx = 0; xx < vw; xx++) {
-      let sum = 0;
+      let sumUpper = 0;
+      let sumLower = 0;
       for (let yy = ya; yy < yb; yy++) {
         const srcX = Math.round(xx + s * (yy - cy));
         if (srcX >= 0 && srcX < vw && doc[yy * vw + srcX]) {
-          sum++;
+          if (yy < yMid) sumUpper++;
+          else sumLower++;
         }
       }
-      phuDoc[xx] = sum / spanY;
+      const covUpper = sumUpper / spanUpper;
+      const covLower = sumLower / spanLower;
+      if (covUpper >= 0.35 && covLower >= 0.35) {
+        phuDoc[xx] = (sumUpper + sumLower) / spanY;
+      }
     }
 
+    // Strict horizontal bounds: at least 0.72*F away from face center so ears/cheeks are never picked
     const trai = chon(
       phuDoc,
-      Math.floor(cx - 1.5 * F),
-      Math.floor(cx - 0.6 * F),
+      Math.floor(cx - 1.48 * F),
+      Math.floor(cx - 0.72 * F),
       true
     );
     const phai = chon(
       phuDoc,
-      Math.floor(cx + 0.6 * F),
-      Math.floor(cx + 1.5 * F),
+      Math.floor(cx + 0.72 * F),
+      Math.floor(cx + 1.48 * F),
       false
     );
     if (!trai || !phai) continue;
 
     const xStart = trai[0] + 4;
     const xEnd = phai[0] - 4;
-    if (xEnd - xStart < 8) continue;
+    if (xEnd - xStart < 1.3 * F) continue;
 
     // Row coverage of sheared horizontal edge map between [trai[0]+4, phai[0]-4)
+    // STRICT CHECK: A true card top border must extend into the outer left/right corners
+    // (outside the hair crown), not just the middle where the top of the hair is!
     const phuNgang = new Float32Array(vh);
     const spanX = xEnd - xStart;
+    const leftCornerEnd = Math.min(xEnd, Math.floor(mx));
+    const rightCornerStart = Math.max(xStart, Math.ceil(mx + F));
+    const cornerSpan =
+      Math.max(0, leftCornerEnd - xStart) +
+      Math.max(0, xEnd - rightCornerStart);
+
     for (let yy = 0; yy < vh; yy++) {
       let sum = 0;
+      let sumCorners = 0;
       for (let xx = xStart; xx < xEnd; xx++) {
         const srcY = Math.round(yy - s * (xx - cx));
         if (srcY >= 0 && srcY < vh && ngang[srcY * vw + xx]) {
           sum++;
+          if (xx < leftCornerEnd || xx >= rightCornerStart) {
+            sumCorners++;
+          }
         }
       }
-      phuNgang[yy] = sum / spanX;
+      const cornerCov = cornerSpan >= 10 ? sumCorners / cornerSpan : 1.0;
+      if (cornerCov >= 0.30) {
+        phuNgang[yy] = sum / spanX;
+      }
     }
 
+    // Top border must be at least 0.24*F above the forehead top `my` (above the hair crown)
     const tren = chon(
       phuNgang,
       Math.floor(my - 1.05 * F),
-      Math.floor(my - 0.1 * F),
+      Math.floor(my - 0.24 * F),
       true
     );
     if (!tren) continue;
@@ -1178,6 +1395,83 @@ function sapXepGoc(pts: Point2D[]): QuadCorners {
   ];
 }
 
+function polygonArea2D(pts: Point2D[]): number {
+  if (pts.length < 3) return 0;
+  let area2 = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const j = (i + 1) % pts.length;
+    area2 += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+  }
+  return Math.abs(area2) * 0.5;
+}
+
+/**
+ * Ramer-Douglas-Peucker closed polygon simplification (`cv2.approxPolyDP(bao, eps * chu_vi, True)`).
+ */
+function approxPolyDPClosed(hull: Point2D[], epsilon: number): Point2D[] {
+  if (hull.length <= 4) return hull;
+
+  const rdpOpen = (pts: Point2D[], eps: number): Point2D[] => {
+    if (pts.length <= 2) return pts;
+    const pFirst = pts[0];
+    const pLast = pts[pts.length - 1];
+    const dx = pLast[0] - pFirst[0];
+    const dy = pLast[1] - pFirst[1];
+    const len = Math.hypot(dx, dy);
+
+    let maxDist = -1;
+    let maxIdx = 0;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const p = pts[i];
+      const dist =
+        len < 1e-6
+          ? Math.hypot(p[0] - pFirst[0], p[1] - pFirst[1])
+          : Math.abs(
+              dy * p[0] - dx * p[1] + pLast[0] * pFirst[1] - pLast[1] * pFirst[0]
+            ) / len;
+      if (dist > maxDist) {
+        maxDist = dist;
+        maxIdx = i;
+      }
+    }
+
+    if (maxDist > eps) {
+      const left = rdpOpen(pts.slice(0, maxIdx + 1), eps);
+      const right = rdpOpen(pts.slice(maxIdx), eps);
+      return left.slice(0, left.length - 1).concat(right);
+    }
+    return [pFirst, pLast];
+  };
+
+  // Find two farthest points on hull to split closed loop into two open chains
+  let startIdx = 0;
+  let oppositeIdx = Math.floor(hull.length / 2);
+  let bestDist2 = -1;
+  for (let i = 0; i < hull.length; i++) {
+    for (let j = i + 1; j < hull.length; j++) {
+      const d2 =
+        (hull[i][0] - hull[j][0]) ** 2 + (hull[i][1] - hull[j][1]) ** 2;
+      if (d2 > bestDist2) {
+        bestDist2 = d2;
+        startIdx = i;
+        oppositeIdx = j;
+      }
+    }
+  }
+
+  const chain1: Point2D[] = [];
+  for (let i = startIdx; i <= oppositeIdx; i++) chain1.push(hull[i]);
+  const chain2: Point2D[] = [];
+  for (let i = oppositeIdx; i < hull.length; i++) chain2.push(hull[i]);
+  for (let i = 0; i <= startIdx; i++) chain2.push(hull[i]);
+
+  const simp1 = rdpOpen(chain1, epsilon);
+  const simp2 = rdpOpen(chain2, epsilon);
+  return simp1
+    .slice(0, simp1.length - 1)
+    .concat(simp2.slice(0, simp2.length - 1));
+}
+
 /**
  * Monotone chain 2D convex hull + polygon area.
  */
@@ -1219,13 +1513,7 @@ function convexHullAndArea(points: Point2D[]): {
   upper.pop();
   lower.pop();
   const hull = lower.concat(upper);
-
-  let area2 = 0;
-  for (let i = 0; i < hull.length; i++) {
-    const j = (i + 1) % hull.length;
-    area2 += hull[i][0] * hull[j][1] - hull[j][0] * hull[i][1];
-  }
-  return { hull, area: Math.abs(area2) * 0.5 };
+  return { hull, area: polygonArea2D(hull) };
 }
 
 /**
@@ -1304,15 +1592,58 @@ function minAreaRectOfHull(hull: Point2D[]): {
 }
 
 /**
+ * Verifies that a candidate quad `corners` has actual edge pixels along at least 3 of its 4 sides
+ * (including the top-left / top-right corner spans), preventing a person's head-and-shoulders
+ * silhouette on a blank white background from being mistaken for a rectangular photo sheet!
+ */
+function hasQuadPerimeterEdgeSupport(
+  corners: QuadCorners,
+  edgeMask: Uint8Array,
+  nw: number,
+  nh: number
+): boolean {
+  let supportedSides = 0;
+  for (let side = 0; side < 4; side++) {
+    const p0 = corners[side];
+    const p1 = corners[(side + 1) % 4];
+    const len = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+    const steps = Math.max(16, Math.round(len));
+    let hits = 0;
+    for (let s = 2; s < steps - 2; s++) {
+      const t = s / steps;
+      const x = Math.round(p0[0] + (p1[0] - p0[0]) * t);
+      const y = Math.round(p0[1] + (p1[1] - p0[1]) * t);
+      let foundNear = false;
+      for (let dy = -3; dy <= 3 && !foundNear; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= nh) continue;
+        for (let dx = -3; dx <= 3; dx++) {
+          const xx = x + dx;
+          if (xx >= 0 && xx < nw && edgeMask[yy * nw + xx]) {
+            foundNear = true;
+            break;
+          }
+        }
+      }
+      if (foundNear) hits++;
+    }
+    const cov = hits / Math.max(1, steps - 4);
+    if (cov >= 0.45) supportedSides++;
+  }
+  return supportedSides >= 3;
+}
+
+/**
  * Port of `tim_to_anh(anh)` from `anh_the.py` (Method B).
  * Detects rectangular photo paper sheets lying on a desk/background using multi-channel LAB edges + morphology.
+ * Works even for white-backdrop photos on white tables where one border segment is faint or open.
  */
 export function timToAnh(
   img: HTMLImageElement | HTMLCanvasElement
 ): QuadCorners[] {
   const W = img instanceof HTMLImageElement ? img.naturalWidth : img.width;
   const H = img instanceof HTMLImageElement ? img.naturalHeight : img.height;
-  const k = Math.min(1.0, 600 / Math.max(H, W));
+  const k = Math.min(1.0, DETECT_MAX / Math.max(H, W));
   const nw = Math.max(40, Math.round(W * k));
   const nh = Math.max(40, Math.round(H * k));
 
@@ -1322,7 +1653,11 @@ export function timToAnh(
   const ctx = canvas.getContext('2d');
   if (!ctx) return [];
   ctx.drawImage(img, 0, 0, nw, nh);
-  const { data: rgba } = ctx.getImageData(0, 0, nw, nh);
+  const { data: rgba } = ctx.getImageData(0, 0, nw, vhOrNh(nh));
+
+  function vhOrNh(v: number) {
+    return v;
+  }
 
   const lab = computeBlurredLabBuffer(rgba, nw, nh, 1.0);
   const canhRaw = new Uint8Array(nw * nh);
@@ -1344,7 +1679,7 @@ export function timToAnh(
         const gx = -tl + tr - 2 * ml + 2 * mr - bl + br;
         const gy = -tl - 2 * tc - tr + bl + 2 * bc + br;
         const mag = Math.hypot(gx, gy) / 4.0;
-        if (mag >= 11.0) {
+        if (mag >= 9.5) {
           isEdge = 1;
           break;
         }
@@ -1353,67 +1688,28 @@ export function timToAnh(
     }
   }
 
-  // Dilate 3x3 then Morph Close 7x7
+  // Dilate 3x3 then Morph Close 7x7 (exact anh_the.py line 404)
   const dilated = dilateMask(canhRaw, nw, nh, 3, 3);
-  const closed = morphClose(dilated, nw, nh, 7, 7);
+  const canh = morphClose(dilated, nw, nh, 7, 7);
 
-  // Flood-fill exterior background from image borders so interior enclosed photo sheets become solid components
-  const visitedBg = new Uint8Array(nw * nh);
-  const qx = new Int32Array(nw * nh);
-  const qy = new Int32Array(nw * nh);
-  let head = 0;
-  let tail = 0;
-
-  const pushBg = (x: number, y: number) => {
-    const idx = y * nw + x;
-    if (!visitedBg[idx] && closed[idx] === 0) {
-      visitedBg[idx] = 1;
-      qx[tail] = x;
-      qy[tail] = y;
-      tail++;
-    }
-  };
-
-  for (let x = 0; x < nw; x++) {
-    pushBg(x, 0);
-    pushBg(x, nh - 1);
-  }
-  for (let y = 0; y < nh; y++) {
-    pushBg(0, y);
-    pushBg(nw - 1, y);
-  }
-
-  while (head < tail) {
-    const cx = qx[head];
-    const cy = qy[head];
-    head++;
-    if (cx > 0) pushBg(cx - 1, cy);
-    if (cx < nw - 1) pushBg(cx + 1, cy);
-    if (cy > 0) pushBg(cx, cy - 1);
-    if (cy < nh - 1) pushBg(cx, cy + 1);
-  }
-
-  const fgMask = new Uint8Array(nw * nh);
-  for (let i = 0; i < nw * nh; i++) {
-    if (!visitedBg[i]) fgMask[i] = 1;
-  }
-
-  const { labels, stats } = connectedComponentsWithStats8(fgMask, nw, nh);
+  // Trace connected components DIRECTLY on `canh` (matching `cv2.findContours(canh, cv2.RETR_EXTERNAL)` in anh_the.py!)
+  // This preserves white-on-white photo sheets even when part of one edge is open (~85% hull fill)!
+  const { labels, stats } = connectedComponentsWithStats8(canh, nw, nh);
   const ungVien: Array<{ dt: number; corners: QuadCorners }> = [];
 
   for (let i = 1; i < stats.length; i++) {
     const st = stats[i];
-    if (st.area < 0.003 * nh * nw || st.area > 0.65 * nh * nw) continue;
+    if (st.width < 36 || st.height < 36) continue;
     if (
-      st.left < 1 ||
-      st.top < 1 ||
-      st.left + st.width > nw - 1 ||
-      st.top + st.height > nh - 1
+      st.left < 2 ||
+      st.top < 2 ||
+      st.left + st.width > nw - 2 ||
+      st.top + st.height > nh - 2
     ) {
-      continue;
+      continue; // bị mép hình cắt
     }
 
-    // Collect boundary points of this component for convex hull
+    // Collect boundary points of this edge component for convexHull(ct)
     const boundaryPts: Point2D[] = [];
     for (let y = st.top; y < st.top + st.height; y++) {
       const rowOff = y * nw;
@@ -1431,20 +1727,41 @@ export function timToAnh(
       }
     }
 
-    const { hull, area: dt } = convexHullAndArea(boundaryPts);
+    const { hull: bao, area: dt } = convexHullAndArea(boundaryPts);
     if (!(0.003 * nh * nw <= dt && dt <= 0.6 * nh * nw)) continue;
 
-    const { rw, rh, corners } = minAreaRectOfHull(hull);
+    const { rw, rh, corners: boxCorners } = minAreaRectOfHull(bao);
     const minSide = Math.min(rw, rh);
     const maxSide = Math.max(rw, rh);
-    if (minSide < 20 || dt / Math.max(1, rw * rh) < 0.80) continue;
+    if (minSide < 40 || dt / Math.max(1, rw * rh) < 0.82) continue;
     if (!(0.55 <= minSide / maxSide && minSide / maxSide <= 0.92)) continue;
 
+    // Perspective trapezoid 4-corner refinement (exact anh_the.py lines 424-430)
+    let goc = boxCorners;
+    let chuVi = 0;
+    for (let j = 0; j < bao.length; j++) {
+      const p1 = bao[j];
+      const p2 = bao[(j + 1) % bao.length];
+      chuVi += Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+    }
+    for (const eps of [0.02, 0.03, 0.04, 0.05]) {
+      const daGiac = approxPolyDPClosed(bao, eps * chuVi);
+      if (daGiac.length === 4 && polygonArea2D(daGiac) > 0.93 * dt) {
+        goc = sapXepGoc(daGiac);
+        break;
+      }
+    }
+
+    // Verify that the 4 sides of `goc` actually have perimeter edge support (not a person's silhouette)
+    if (!hasQuadPerimeterEdgeSupport(goc, canh, nw, nh)) {
+      continue;
+    }
+
     const scaledCorners: QuadCorners = [
-      [corners[0][0] / k, corners[0][1] / k],
-      [corners[1][0] / k, corners[1][1] / k],
-      [corners[2][0] / k, corners[2][1] / k],
-      [corners[3][0] / k, corners[3][1] / k],
+      [goc[0][0] / k, goc[0][1] / k],
+      [goc[1][0] / k, goc[1][1] / k],
+      [goc[2][0] / k, goc[2][1] / k],
+      [goc[3][0] / k, goc[3][1] / k],
     ];
     ungVien.push({ dt, corners: scaledCorners });
   }
@@ -1455,7 +1772,8 @@ export function timToAnh(
 
 /**
  * Port of `khung_trong_to(to, mat)` from `anh_the.py`:
- * Trims the white paper rim (up to 9% on each side) inside a deskewed photo card and enforces 3:4 aspect ratio.
+ * Trims the white paper rim (up to 9% on each side) inside a deskewed photo card and enforces 3:4 aspect ratio,
+ * while strictly protecting the detected face `mat` so white-backdrop photos never get their head/hair clipped.
  */
 function khungTrongTo(
   toCanvas: HTMLCanvasElement,
@@ -1517,12 +1835,24 @@ function khungTrongTo(
     }
   }
 
-  const ghX = Math.floor(0.09 * w);
-  const ghY = Math.floor(0.09 * h);
+  // Never trim closer to the face than safe headroom / cheek margins
+  const ghXLeft = Math.min(
+    Math.floor(0.09 * w),
+    Math.max(i0, Math.floor(mat.x - 0.18 * mat.width))
+  );
+  const ghXRight = Math.min(
+    Math.floor(0.09 * w),
+    Math.max(i0, Math.floor(w - (mat.x + mat.width * 1.18)))
+  );
+  const ghYTop = Math.min(
+    Math.floor(0.09 * h),
+    Math.max(i0, Math.floor(mat.y - 0.22 * mat.height))
+  );
+  const ghYBot = Math.floor(0.09 * h);
 
   // Top border
   let y0 = i0;
-  for (let yy = i0; yy < ghY; yy++) {
+  for (let yy = i0; yy < ghYTop; yy++) {
     let ok = true;
     for (let k = 0; k < 3; k++) {
       let sum = 0;
@@ -1540,7 +1870,7 @@ function khungTrongTo(
 
   // Bottom border
   let y1 = h - i0;
-  for (let i = i0; i < ghY; i++) {
+  for (let i = i0; i < ghYBot; i++) {
     let ok = true;
     for (let k = 0; k < 3; k++) {
       const yy = h - 1 - (i + k);
@@ -1559,7 +1889,7 @@ function khungTrongTo(
 
   // Left border
   let x0 = i0;
-  for (let xx = i0; xx < ghX; xx++) {
+  for (let xx = i0; xx < ghXLeft; xx++) {
     let ok = true;
     for (let k = 0; k < 3; k++) {
       let sum = 0;
@@ -1577,7 +1907,7 @@ function khungTrongTo(
 
   // Right border
   let x1 = w - i0;
-  for (let i = i0; i < ghX; i++) {
+  for (let i = i0; i < ghXRight; i++) {
     let ok = true;
     for (let k = 0; k < 3; k++) {
       const xx = w - 1 - (i + k);
@@ -1619,6 +1949,7 @@ function khungTrongTo(
 
 /**
  * Port of `cat_theo_mat(anh, mat)` from `anh_the.py` (Method C: 3:4 crop around face, no rotation).
+ * Strictly centers horizontally on `x + fw / 2` and positions forehead `y` at `MAT_Y = 0.17` of card height.
  */
 export function catTheoMat(
   W: number,
@@ -1626,15 +1957,20 @@ export function catTheoMat(
   mat: { x: number; y: number; width: number; height: number }
 ): QuadCorners {
   const { x, y, width: fw } = mat;
+  const faceCenterX = x + fw / 2;
   let rong = fw / MAT_RONG;
   let cao = rong / TI_LE;
   const ti = Math.min(1.0, W / rong, H / cao);
   rong *= ti;
   cao *= ti;
-  const x0 = Math.round(Math.min(Math.max(x + fw / 2 - rong / 2, 0), W - rong));
-  const y0 = Math.round(Math.min(Math.max(y - MAT_Y * cao, 0), H - cao));
-  const rRound = Math.round(rong);
-  const cRound = Math.round(cao);
+  const x0 = Math.round(
+    Math.min(Math.max(faceCenterX - rong / 2, 0), Math.max(0, W - rong))
+  );
+  const y0 = Math.round(
+    Math.min(Math.max(y - MAT_Y * cao, 0), Math.max(0, H - cao))
+  );
+  const rRound = Math.max(8, Math.round(rong));
+  const cRound = Math.max(10, Math.round(cao));
   return [
     [x0, y0],
     [x0 + rRound, y0],
@@ -2541,7 +2877,7 @@ function findSkinHairFaceCandidates(
   imgW: number,
   imgH: number
 ): DetectedFaceBox[] {
-  const maxDim = 320;
+  const maxDim = 360;
   const scale = Math.min(1, maxDim / Math.max(imgW, imgH));
   const sw = Math.max(32, Math.round(imgW * scale));
   const sh = Math.max(32, Math.round(imgH * scale));
@@ -2557,19 +2893,24 @@ function findSkinHairFaceCandidates(
 
   const skinMask = new Uint8Array(sw * sh);
   const hairMask = new Uint8Array(sw * sh);
-  const blueBackdropMask = new Uint8Array(sw * sh);
+  const uniformBackdropMask = new Uint8Array(sw * sh);
 
   for (let i = 0; i < sw * sh; i++) {
     const r = data[i * 4];
     const g = data[i * 4 + 1];
     const b = data[i * 4 + 2];
     const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    const spread = Math.max(r, g, b) - Math.min(r, g, b);
     if (isHumanSkinPixel(r, g, b)) skinMask[i] = 1;
-    if (lum >= 12 && lum <= 80 && Math.max(r, g, b) - Math.min(r, g, b) < 42) {
+    if (lum >= 8 && lum <= 85 && spread < 45) {
       hairMask[i] = 1;
     }
-    if ((b > r + 22 && b > 100) || (g > r + 18 && b > r + 18 && b > 95)) {
-      blueBackdropMask[i] = 1;
+    // Reward BOTH white/light-gray backdrop AND blue backdrop equally!
+    const isBlueBg =
+      (b > r + 22 && b > 100) || (g > r + 18 && b > r + 18 && b > 95);
+    const isWhiteOrGrayBg = lum >= 165 && spread <= 24;
+    if (isBlueBg || isWhiteOrGrayBg) {
+      uniformBackdropMask[i] = 1;
     }
   }
 
@@ -2624,24 +2965,25 @@ function findSkinHairFaceCandidates(
       const bw = maxX - minX + 1;
       const bh = maxY - minY + 1;
       if (
-        skinCount < 14 ||
-        bw < 4 ||
-        bh < 5 ||
-        bw > sw * 0.75 ||
-        bh > sh * 0.75
+        skinCount < 16 ||
+        bw < 6 ||
+        bh < 7 ||
+        bw > sw * 0.72 ||
+        bh > sh * 0.72
       ) {
         continue;
       }
 
       const faceW = bw;
-      const faceH = Math.min(Math.round(bw * 1.25), bh);
+      const faceH = Math.min(Math.round(bw * 1.15), bh);
       const aspect = faceW / Math.max(1, faceH);
-      if (aspect < 0.42 || aspect > 1.55) continue;
+      if (aspect < 0.55 || aspect > 1.35) continue;
 
-      const hairY0 = Math.max(0, Math.round(minY - faceH * 0.45));
-      const hairY1 = Math.min(sh - 1, Math.round(minY + faceH * 0.45));
-      const hairX0 = Math.max(0, Math.round(minX - faceW * 0.35));
-      const hairX1 = Math.min(sw - 1, Math.round(maxX + faceW * 0.35));
+      // 1) Dark hair crown directly above forehead
+      const hairY0 = Math.max(0, Math.round(minY - faceH * 0.42));
+      const hairY1 = Math.min(sh - 1, Math.round(minY + faceH * 0.25));
+      const hairX0 = Math.max(0, Math.round(minX - faceW * 0.2));
+      const hairX1 = Math.min(sw - 1, Math.round(maxX + faceW * 0.2));
       let hairPixels = 0;
       let hairArea = 0;
       for (let hy = hairY0; hy <= hairY1; hy++) {
@@ -2651,25 +2993,38 @@ function findSkinHairFaceCandidates(
         }
       }
       const hairRatio = hairPixels / Math.max(1, hairArea);
-      if (hairRatio < 0.08) continue;
+      if (hairRatio < 0.12) continue;
 
-      const bgY0 = Math.max(0, Math.round(minY - faceH * 0.5));
-      const bgY1 = Math.min(sh - 1, Math.round(minY + faceH * 1.1));
-      const bgX0 = Math.max(0, Math.round(minX - faceW * 0.75));
-      const bgX1 = Math.min(sw - 1, Math.round(maxX + faceW * 0.75));
-      let bluePixels = 0;
-      let bgArea = 0;
+      // 2) Uniform backdrop on BOTH left and right of head (white/gray OR blue)
+      const bgY0 = Math.max(0, Math.round(minY - faceH * 0.35));
+      const bgY1 = Math.min(sh - 1, Math.round(minY + faceH * 0.9));
+      const leftBgX0 = Math.max(0, Math.round(minX - faceW * 0.7));
+      const leftBgX1 = Math.max(0, minX - 1);
+      const rightBgX0 = Math.min(sw - 1, maxX + 1);
+      const rightBgX1 = Math.min(sw - 1, Math.round(maxX + faceW * 0.7));
+
+      let leftBgHits = 0;
+      let leftBgTotal = 0;
+      let rightBgHits = 0;
+      let rightBgTotal = 0;
       for (let by = bgY0; by <= bgY1; by++) {
-        for (let bx = bgX0; bx <= bgX1; bx++) {
-          bgArea++;
-          if (blueBackdropMask[by * sw + bx]) bluePixels++;
+        for (let bx = leftBgX0; bx <= leftBgX1; bx++) {
+          leftBgTotal++;
+          if (uniformBackdropMask[by * sw + bx]) leftBgHits++;
+        }
+        for (let bx = rightBgX0; bx <= rightBgX1; bx++) {
+          rightBgTotal++;
+          if (uniformBackdropMask[by * sw + bx]) rightBgHits++;
         }
       }
-      const blueRatio = bluePixels / Math.max(1, bgArea);
+      const leftBgRatio = leftBgHits / Math.max(1, leftBgTotal);
+      const rightBgRatio = rightBgHits / Math.max(1, rightBgTotal);
+      const backdropBonus =
+        1 + 2.2 * Math.min(leftBgRatio, rightBgRatio) + 0.8 * ((leftBgRatio + rightBgRatio) / 2);
 
       const centerBias =
         1 -
-        0.3 *
+        0.25 *
           Math.hypot(
             (minX + faceW / 2 - sw / 2) / sw,
             (minY + faceH / 2 - sh / 2) / sh
@@ -2677,15 +3032,15 @@ function findSkinHairFaceCandidates(
 
       const score =
         skinCount *
-        (0.5 + Math.min(0.6, hairRatio * 2)) *
-        (1 + blueRatio * 3.5) *
+        (0.4 + Math.min(0.8, hairRatio * 2.2)) *
+        backdropBonus *
         centerBias;
 
       candidates.push({
         x: minX / scale,
         y: minY / scale,
         w: faceW / scale,
-        h: faceH / scale,
+        h: faceW / scale,
         score,
       });
     }
@@ -2693,14 +3048,14 @@ function findSkinHairFaceCandidates(
 
   candidates.sort((a, b) => b.score - a.score);
   return candidates.slice(0, 6).map((c, idx) => {
-    const eyeY = c.y + c.h * 0.38;
+    const eyeY = c.y + c.h * 0.40;
     return {
       id: idx,
       x: c.x,
       y: c.y,
       width: c.w,
       height: c.h,
-      confidence: 0.75,
+      confidence: 0.55,
       keypoints: [
         { x: c.x + c.w * 0.32, y: eyeY, name: 'right_eye' },
         { x: c.x + c.w * 0.68, y: eyeY, name: 'left_eye' },
@@ -2710,16 +3065,93 @@ function findSkinHairFaceCandidates(
   });
 }
 
+/**
+ * Normalizes a MediaPipe BlazeFace detection (`bb` + `keypoints`) into the exact
+ * OpenCV Haar Cascade frontal face box geometry (`x, y, fw, fh` with `fw === fh`)
+ * expected by `anh_the.py` (`MAT_RONG = 0.52`, `MAT_Y = 0.17`):
+ * - Horizontal center `x + fw/2` is strictly anchored on the eyes/nose midpoint.
+ * - Forehead top `y` sits `0.40 * fw` above the eye line.
+ * - Width `fw` spans full ear-to-ear head width (`~2.38 * interEyeDist`).
+ */
+function normalizeFaceBoxToHaarGeometry(
+  rawX: number,
+  rawY: number,
+  rawW: number,
+  rawH: number,
+  kps: Array<{ x: number; y: number; name?: string }>
+): { x: number; y: number; width: number; height: number; tilt: number } {
+  let tilt = 0;
+  if (kps.length >= 2) {
+    const rEye = kps[0];
+    const lEye = kps[1];
+    const dy = lEye.y - rEye.y;
+    const dx = lEye.x - rEye.x;
+    if (Math.abs(dx) > 3) {
+      const rawAngle = -(Math.atan2(dy, dx) * 180) / Math.PI;
+      if (Math.abs(rawAngle) <= 28) {
+        tilt = Number(rawAngle.toFixed(1));
+      }
+    }
+
+    const eyeDist = Math.hypot(dx, dy);
+    if (eyeDist > 4) {
+      const eyeCx = (rEye.x + lEye.x) / 2;
+      const eyeCy = (rEye.y + lEye.y) / 2;
+      const nose = kps[2];
+      // Anchor horizontal center strictly on the person's eyes & nose
+      const faceCx = nose ? eyeCx * 0.75 + nose.x * 0.25 : eyeCx;
+
+      // Ear-to-ear check if ears (kps[4], kps[5]) are present
+      let earSpan = 0;
+      if (kps.length >= 6) {
+        earSpan = Math.hypot(kps[5].x - kps[4].x, kps[5].y - kps[4].y);
+      }
+
+      const haarW = Math.max(
+        rawW * 0.94,
+        Math.min(
+          rawW * 1.28,
+          earSpan > eyeDist * 1.6 ? earSpan * 1.04 : eyeDist * 2.38
+        )
+      );
+      const haarH = haarW;
+      const haarX = faceCx - haarW / 2;
+      // In OpenCV haarcascade_frontalface_default, eyes sit at ~40% from top of face box
+      const haarY = eyeCy - 0.40 * haarH;
+
+      return {
+        x: haarX,
+        y: haarY,
+        width: haarW,
+        height: haarH,
+        tilt,
+      };
+    }
+  }
+
+  const side = Math.max(rawW, rawH * 0.95);
+  const cx = rawX + rawW / 2;
+  const cy = rawY + rawH * 0.46;
+  return {
+    x: cx - side / 2,
+    y: cy - side * 0.48,
+    width: side,
+    height: side,
+    tilt,
+  };
+}
+
 async function runMediaPipeOnRoi(
   mpDetector: FaceDetector,
   img: HTMLImageElement | HTMLCanvasElement,
   roiX: number,
   roiY: number,
   roiW: number,
-  roiH: number
+  roiH: number,
+  targetSize = 768
 ): Promise<DetectedFaceBox[]> {
-  const targetSize = 512;
-  const scale = Math.min(1.5, targetSize / Math.max(roiW, roiH));
+  if (roiW < 16 || roiH < 16) return [];
+  const scale = Math.min(2.0, targetSize / Math.max(roiW, roiH));
   const cw = Math.max(64, Math.round(roiW * scale));
   const ch = Math.max(64, Math.round(roiH * scale));
 
@@ -2735,10 +3167,10 @@ async function runMediaPipeOnRoi(
 
   return res.detections.map((det, idx) => {
     const bb = det.boundingBox!;
-    const fx = roiX + bb.originX / scale;
-    const fy = roiY + bb.originY / scale;
-    const fw = bb.width / scale;
-    const fh = bb.height / scale;
+    const rawFx = roiX + bb.originX / scale;
+    const rawFy = roiY + bb.originY / scale;
+    const rawFw = bb.width / scale;
+    const rawFh = bb.height / scale;
 
     const kps = (det.keypoints || []).map((kp, kIdx) => ({
       x: roiX + (kp.x * cw) / scale,
@@ -2752,30 +3184,66 @@ async function runMediaPipeOnRoi(
               ? 'nose'
               : kIdx === 3
                 ? 'mouth'
-                : `kp_${kIdx}`,
+                : kIdx === 4
+                  ? 'right_ear'
+                  : kIdx === 5
+                    ? 'left_ear'
+                    : `kp_${kIdx}`,
     }));
 
-    let tilt = 0;
-    if (kps.length >= 2) {
-      const dy = kps[1].y - kps[0].y;
-      const dx = kps[1].x - kps[0].x;
-      if (Math.abs(dx) > 3) {
-        const raw = -(Math.atan2(dy, dx) * 180) / Math.PI;
-        if (Math.abs(raw) <= 25) tilt = Number(raw.toFixed(1));
-      }
-    }
+    const norm = normalizeFaceBoxToHaarGeometry(
+      rawFx,
+      rawFy,
+      rawFw,
+      rawFh,
+      kps
+    );
 
     return {
       id: idx,
-      x: fx,
-      y: fy,
-      width: fw,
-      height: fh,
+      x: norm.x,
+      y: norm.y,
+      width: norm.width,
+      height: norm.height,
       confidence: det.categories?.[0]?.score ?? 0.9,
       keypoints: kps,
-      suggestedTiltDeg: tilt,
+      suggestedTiltDeg: norm.tilt,
     };
   });
+}
+
+function deduplicateFacesNms(faces: DetectedFaceBox[]): DetectedFaceBox[] {
+  const sorted = [...faces].sort(
+    (a, b) =>
+      b.confidence * Math.pow(a.width * a.height, 0.15) -
+      a.confidence * Math.pow(b.width * b.height, 0.15)
+  );
+  const kept: DetectedFaceBox[] = [];
+  for (const cand of sorted) {
+    const isDup = kept.some((k) => {
+      const ix0 = Math.max(cand.x, k.x);
+      const iy0 = Math.max(cand.y, k.y);
+      const ix1 = Math.min(cand.x + cand.width, k.x + k.width);
+      const iy1 = Math.min(cand.y + cand.height, k.y + k.height);
+      const inter = Math.max(0, ix1 - ix0) * Math.max(0, iy1 - iy0);
+      const minArea = Math.min(
+        cand.width * cand.height,
+        k.width * k.height
+      );
+      const centerDist = Math.hypot(
+        cand.x + cand.width / 2 - (k.x + k.width / 2),
+        cand.y + cand.height / 2 - (k.y + k.height / 2)
+      );
+      return (
+        inter / Math.max(1, minArea) > 0.35 ||
+        centerDist < 0.45 * Math.min(cand.width, k.width)
+      );
+    });
+    if (!isDup) {
+      kept.push({ ...cand, id: kept.length });
+    }
+  }
+  return kept;
 }
 
 function quadToPhotoCardRect(
@@ -2816,15 +3284,508 @@ function quadToPhotoCardRect(
 }
 
 // ============================================================================
+// PORTRAIT SEGMENTATION & BACKDROP MATTING (MODNet / SelfieSegmenter + Guided Filter)
+// ============================================================================
+
+/**
+ * Fast Edge-Preserving Guided Filter (He et al.) to refine the raw portrait confidence mask
+ * against the high-res RGB image so hair strands and shoulder edges are crisp without halos.
+ */
+function guidedFilterAlpha(
+  guideRgba: Uint8ClampedArray,
+  rawAlpha: Float32Array,
+  w: number,
+  h: number,
+  radius = 4,
+  eps = 0.0025
+): Float32Array {
+  const N = w * h;
+  const I = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const idx = i * 4;
+    I[i] =
+      (0.299 * guideRgba[idx] +
+        0.587 * guideRgba[idx + 1] +
+        0.114 * guideRgba[idx + 2]) /
+      255.0;
+  }
+
+  const boxMean = (src: Float32Array): Float32Array => {
+    const tmp = new Float32Array(N);
+    const dst = new Float32Array(N);
+    for (let y = 0; y < h; y++) {
+      let sum = 0;
+      let cnt = 0;
+      const rowOff = y * w;
+      for (let x = 0; x <= radius && x < w; x++) {
+        sum += src[rowOff + x];
+        cnt++;
+      }
+      for (let x = 0; x < w; x++) {
+        tmp[rowOff + x] = sum / cnt;
+        const removeX = x - radius;
+        const addX = x + radius + 1;
+        if (removeX >= 0) {
+          sum -= src[rowOff + removeX];
+          cnt--;
+        }
+        if (addX < w) {
+          sum += src[rowOff + addX];
+          cnt++;
+        }
+      }
+    }
+    for (let x = 0; x < w; x++) {
+      let sum = 0;
+      let cnt = 0;
+      for (let y = 0; y <= radius && y < h; y++) {
+        sum += tmp[y * w + x];
+        cnt++;
+      }
+      for (let y = 0; y < h; y++) {
+        dst[y * w + x] = sum / cnt;
+        const removeY = y - radius;
+        const addY = y + radius + 1;
+        if (removeY >= 0) {
+          sum -= tmp[removeY * w + x];
+          cnt--;
+        }
+        if (addY < h) {
+          sum += tmp[addY * w + x];
+          cnt++;
+        }
+      }
+    }
+    return dst;
+  };
+
+  const II = new Float32Array(N);
+  const Ip = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    II[i] = I[i] * I[i];
+    Ip[i] = I[i] * rawAlpha[i];
+  }
+
+  const meanI = boxMean(I);
+  const meanP = boxMean(rawAlpha);
+  const meanII = boxMean(II);
+  const meanIp = boxMean(Ip);
+
+  const a = new Float32Array(N);
+  const b = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const varI = Math.max(0, meanII[i] - meanI[i] * meanI[i]);
+    const covIp = meanIp[i] - meanI[i] * meanP[i];
+    a[i] = covIp / (varI + eps);
+    b[i] = meanP[i] - a[i] * meanI[i];
+  }
+
+  const meanA = boxMean(a);
+  const meanB = boxMean(b);
+  const out = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const v = meanA[i] * I[i] + meanB[i];
+    // Slight contrast S-curve on alpha for clean matte transition
+    const clamped = Math.max(0, Math.min(1, v));
+    out[i] = Math.max(0, Math.min(1, (clamped - 0.12) / 0.78));
+  }
+  return out;
+}
+
+/**
+ * Computes a 354x472 person alpha matte (`Float32Array` in [0..1]) using the offline
+ * neural portrait segmenter (`/models/selfie_segmenter.tflite`) + Guided Filter + Face/Torso protection.
+ */
+export async function computePortraitAlphaMatte(
+  croppedCanvas: HTMLCanvasElement,
+  normalizedFace?: [number, number, number, number]
+): Promise<Float32Array> {
+  const w = croppedCanvas.width;
+  const h = croppedCanvas.height;
+  const ctx = croppedCanvas.getContext('2d');
+  const N = w * h;
+  const alpha = new Float32Array(N);
+  alpha.fill(1);
+  if (!ctx) return alpha;
+
+  const { data: rgba } = ctx.getImageData(0, 0, w, h);
+  const [fx0, fy0, fx1, fy1] = normalizedFace || [0.24, 0.17, 0.76, 0.69];
+  const fcx = ((fx0 + fx1) / 2) * w;
+  const fcy = ((fy0 + fy1) / 2) * h;
+  const rxFace = Math.max(12, (fx1 - fx0) * w * 0.50);
+  const ryFace = Math.max(15, (fy1 - fy0) * h * 0.60);
+
+  let gotNeuralMask = false;
+
+  const segmenter = await getMediaPipeImageSegmenter();
+  if (segmenter) {
+    try {
+      const segResult = segmenter.segment(croppedCanvas);
+      const masks = segResult.confidenceMasks;
+      if (masks && masks.length > 0) {
+        // Choose foreground mask (index 1 if 2-class background/person, else index 0)
+        const maskObj = masks.length > 1 ? masks[1] : masks[0];
+        let rawMask: Float32Array | null = null;
+        try {
+          // NOTE: Do NOT guard with `maskObj.hasFloat32Array()` because on WebGL GPU
+          // `hasFloat32Array()` returns false until `getAsFloat32Array()` is invoked!
+          rawMask = maskObj.getAsFloat32Array();
+        } catch {
+          try {
+            const u8 = maskObj.getAsUint8Array();
+            rawMask = new Float32Array(u8.length);
+            for (let i = 0; i < u8.length; i++) rawMask[i] = u8[i] / 255.0;
+          } catch {
+            rawMask = null;
+          }
+        }
+
+        if (rawMask && rawMask.length > 0) {
+          const mw = maskObj.width || w;
+          const mh = maskObj.height || h;
+          if (mw === w && mh === h) {
+            alpha.set(rawMask);
+          } else {
+            for (let y = 0; y < h; y++) {
+              const sy = Math.min(mh - 1, Math.floor((y * mh) / h));
+              for (let x = 0; x < w; x++) {
+                const sx = Math.min(mw - 1, Math.floor((x * mw) / w));
+                alpha[y * w + x] = rawMask[sy * mw + sx];
+              }
+            }
+          }
+
+          // Verify mask polarity: face center must be foreground (high) and top corners must be background (low)
+          let faceSum = 0;
+          let faceCnt = 0;
+          for (
+            let y = Math.max(0, Math.floor(fcy - ryFace * 0.4));
+            y <= Math.min(h - 1, Math.ceil(fcy + ryFace * 0.4));
+            y += 2
+          ) {
+            for (
+              let x = Math.max(0, Math.floor(fcx - rxFace * 0.4));
+              x <= Math.min(w - 1, Math.ceil(fcx + rxFace * 0.4));
+              x += 2
+            ) {
+              faceSum += alpha[y * w + x];
+              faceCnt++;
+            }
+          }
+
+          let cornerSum = 0;
+          let cornerCnt = 0;
+          const cPadX = Math.max(8, Math.round(w * 0.14));
+          const cPadY = Math.max(8, Math.round(h * 0.18));
+          for (let y = 2; y < cPadY; y += 2) {
+            for (let x = 2; x < cPadX; x += 2) {
+              cornerSum += alpha[y * w + x];
+              cornerCnt++;
+            }
+            for (let x = w - cPadX; x < w - 2; x += 2) {
+              cornerSum += alpha[y * w + x];
+              cornerCnt++;
+            }
+          }
+
+          const faceMean = faceCnt > 0 ? faceSum / faceCnt : 0.9;
+          const cornerMean = cornerCnt > 0 ? cornerSum / cornerCnt : 0.1;
+
+          if (cornerMean > faceMean + 0.12) {
+            // Mask has 1 = background, 0 = person -> invert
+            for (let i = 0; i < N; i++) {
+              alpha[i] = 1.0 - alpha[i];
+            }
+            gotNeuralMask = true;
+          } else if (faceMean > cornerMean + 0.12) {
+            gotNeuralMask = true;
+          }
+        }
+      }
+      segResult.close();
+    } catch (err) {
+      console.warn('Portrait segmentation inference fallback:', err);
+    }
+  }
+
+  // Border-seeded background flood-fill + color distance matting:
+  // Works both as a standalone fallback when neural mask is unavailable AND as a
+  // border cleanup pass so top/side background corners are guaranteed 100% removed!
+  const lab = computeBlurredLabBuffer(rgba, w, h, 0.6);
+  const borderSamplesL: number[] = [];
+  const borderSamplesA: number[] = [];
+  const borderSamplesB: number[] = [];
+  const pad = Math.max(3, Math.round(0.04 * w));
+  for (let y = 2; y < Math.round(0.58 * h); y += 2) {
+    for (const x of [pad, w - 1 - pad]) {
+      const idx = (y * w + x) * 3;
+      borderSamplesL.push(lab[idx]);
+      borderSamplesA.push(lab[idx + 1]);
+      borderSamplesB.push(lab[idx + 2]);
+    }
+  }
+  for (let x = pad; x < w - pad; x += 3) {
+    const idx = (pad * w + x) * 3;
+    borderSamplesL.push(lab[idx]);
+    borderSamplesA.push(lab[idx + 1]);
+    borderSamplesB.push(lab[idx + 2]);
+  }
+  const bgL = medianOfArray(borderSamplesL);
+  const bgA = medianOfArray(borderSamplesA);
+  const bgB = medianOfArray(borderSamplesB);
+
+  if (!gotNeuralMask) {
+    // Flood-fill from top, left, and right borders (above shoulder line y < 0.76*h)
+    const bgVisited = new Uint8Array(N);
+    const queue: number[] = [];
+    const maxBorderY = Math.round(0.76 * h);
+
+    const isProtectedPerson = (x: number, y: number): boolean => {
+      const dfx = (x - fcx) / (rxFace * 1.02);
+      const dfy = (y - fcy) / (ryFace * 1.05);
+      if (dfx * dfx + dfy * dfy < 1.0) return true;
+      // Torso/chest core below chin
+      const torsoCy = h * 0.90;
+      const dtx = (x - fcx) / (w * 0.34);
+      const dty = (y - torsoCy) / (h * 0.25);
+      if (y > fcy + ryFace * 0.65 && dtx * dtx + dty * dty < 1.0) return true;
+      return false;
+    };
+
+    const pushSeed = (x: number, y: number) => {
+      if (x < 0 || x >= w || y < 0 || y >= h) return;
+      if (isProtectedPerson(x, y)) return;
+      const i = y * w + x;
+      if (!bgVisited[i]) {
+        bgVisited[i] = 1;
+        queue.push(i);
+      }
+    };
+
+    for (let x = 0; x < w; x++) {
+      pushSeed(x, 0);
+      pushSeed(x, 1);
+    }
+    for (let y = 0; y < maxBorderY; y++) {
+      pushSeed(0, y);
+      pushSeed(1, y);
+      pushSeed(w - 1, y);
+      pushSeed(w - 2, y);
+    }
+
+    let head = 0;
+    while (head < queue.length) {
+      const curr = queue[head++];
+      const cy = Math.floor(curr / w);
+      const cx = curr % w;
+      const cL = lab[curr * 3];
+      const ca = lab[curr * 3 + 1];
+      const cb = lab[curr * 3 + 2];
+
+      const neighbors = [
+        [cx - 1, cy],
+        [cx + 1, cy],
+        [cx, cy - 1],
+        [cx, cy + 1],
+      ];
+      for (const [nx, ny] of neighbors) {
+        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+        const nIdx = ny * w + nx;
+        if (bgVisited[nIdx] || isProtectedPerson(nx, ny)) continue;
+
+        const nL = lab[nIdx * 3];
+        const na = lab[nIdx * 3 + 1];
+        const nb = lab[nIdx * 3 + 2];
+
+        // Neighbor step similarity + global background similarity
+        const stepDist = Math.hypot(
+          (nL - cL) * 0.55,
+          na - ca,
+          nb - cb
+        );
+        const globalDist = Math.hypot(
+          (nL - bgL) * 0.45,
+          na - bgA,
+          nb - bgB
+        );
+        if (stepDist <= 7.5 && globalDist <= 28.0) {
+          bgVisited[nIdx] = 1;
+          queue.push(nIdx);
+        }
+      }
+    }
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (bgVisited[i]) {
+          alpha[i] = 0.0;
+        } else {
+          const dL = (lab[i * 3] - bgL) * 0.45;
+          const da = lab[i * 3 + 1] - bgA;
+          const db = lab[i * 3 + 2] - bgB;
+          const dist = Math.hypot(dL, da, db);
+          alpha[i] = Math.max(0.15, Math.min(1, (dist - 10.0) / 14.0));
+        }
+      }
+    }
+  }
+
+  // Protect the human face & neck oval (`normalizedFace`) so eyes, glasses, and skin are 100% opaque
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const dx = (x - fcx) / rxFace;
+      const dy = (y - fcy) / ryFace;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < 1.0) {
+        const boost = d2 < 0.72 ? 1.0 : 1.0 - (d2 - 0.72) / 0.28;
+        alpha[y * w + x] = Math.max(alpha[y * w + x], boost);
+      }
+    }
+  }
+
+  return guidedFilterAlpha(rgba, alpha, w, h, 4, 0.002);
+}
+
+function parseHexToRgb(hex: string): [number, number, number] {
+  const clean = hex.replace('#', '').trim();
+  if (clean.length === 6) {
+    const r = parseInt(clean.slice(0, 2), 16);
+    const g = parseInt(clean.slice(2, 4), 16);
+    const b = parseInt(clean.slice(4, 6), 16);
+    if (!Number.isNaN(r) && !Number.isNaN(g) && !Number.isNaN(b)) {
+      return [r, g, b];
+    }
+  }
+  return [35, 97, 184]; // #2361B8 standard ID blue
+}
+
+/**
+ * Composites the person onto a solid backdrop `[bgR, bgG, bgB]` using `alphaMatte` (or color-matte fallback)
+ * with foreground edge color decontamination (de-spill).
+ */
+function compositeBackdropOnCanvas(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  bgRgb: [number, number, number],
+  alphaMatte?: Float32Array,
+  normalizedFace?: [number, number, number, number]
+): void {
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const data = imgData.data;
+  const N = w * h;
+
+  // Estimate original background RGB from top-left and top-right corners for edge de-spill
+  let origBgR = 240;
+  let origBgG = 240;
+  let origBgB = 240;
+  const rSamples: number[] = [];
+  const gSamples: number[] = [];
+  const bSamples: number[] = [];
+  for (let y = 2; y < Math.min(h, 24); y += 2) {
+    for (const x of [4, 8, w - 5, w - 9]) {
+      if (x >= 0 && x < w) {
+        const idx = (y * w + x) * 4;
+        rSamples.push(data[idx]);
+        gSamples.push(data[idx + 1]);
+        bSamples.push(data[idx + 2]);
+      }
+    }
+  }
+  if (rSamples.length > 0) {
+    origBgR = medianOfArray(rSamples);
+    origBgG = medianOfArray(gSamples);
+    origBgB = medianOfArray(bSamples);
+  }
+
+  let effectiveAlpha = alphaMatte;
+  if (!effectiveAlpha || effectiveAlpha.length !== N) {
+    // Synchronous fallback matte based on LAB distance from sampled corner background + face/torso prior
+    const lab = computeBlurredLabBuffer(data, w, h, 0.45);
+    const [bgL, bgA, bgB] = rgbToCvLab(origBgR, origBgG, origBgB);
+    const raw = new Float32Array(N);
+    const [fx0, fy0, fx1, fy1] = normalizedFace || [0.24, 0.17, 0.76, 0.69];
+    const fcx = ((fx0 + fx1) / 2) * w;
+    const fcy = ((fy0 + fy1) / 2) * h;
+    const rxFace = Math.max(12, (fx1 - fx0) * w * 0.52);
+    const ryFace = Math.max(15, (fy1 - fy0) * h * 0.62);
+    const torsoCy = h * 0.88;
+    const rxTorso = w * 0.42;
+    const ryTorso = h * 0.28;
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        const dL = (lab[i * 3] - bgL) * 0.45;
+        const da = lab[i * 3 + 1] - bgA;
+        const db = lab[i * 3 + 2] - bgB;
+        const dist = Math.hypot(dL, da, db);
+        let a = Math.max(0, Math.min(1, (dist - 10.5) / 14.0));
+
+        const dfx = (x - fcx) / rxFace;
+        const dfy = (y - fcy) / ryFace;
+        if (dfx * dfx + dfy * dfy < 1.0) a = 1.0;
+
+        const dtx = (x - fcx) / rxTorso;
+        const dty = (y - torsoCy) / ryTorso;
+        if (
+          y > fcy + ryFace * 0.6 &&
+          dtx * dtx + dty * dty < 0.85 &&
+          dist > 6.0
+        ) {
+          a = Math.max(a, 0.95);
+        }
+        raw[i] = a;
+      }
+    }
+    effectiveAlpha = guidedFilterAlpha(data, raw, w, h, 3, 0.002);
+  }
+
+  const [targetR, targetG, targetB] = bgRgb;
+  for (let i = 0; i < N; i++) {
+    const a = effectiveAlpha[i];
+    if (a >= 0.985) continue;
+    const idx = i * 4;
+    if (a <= 0.015) {
+      data[idx] = targetR;
+      data[idx + 1] = targetG;
+      data[idx + 2] = targetB;
+      continue;
+    }
+    // Foreground color decontamination at semi-transparent hair/shoulder boundary
+    const safeA = Math.max(0.25, a);
+    const fgR = Math.max(
+      0,
+      Math.min(255, (data[idx] - (1 - a) * origBgR) / safeA)
+    );
+    const fgG = Math.max(
+      0,
+      Math.min(255, (data[idx + 1] - (1 - a) * origBgG) / safeA)
+    );
+    const fgB = Math.max(
+      0,
+      Math.min(255, (data[idx + 2] - (1 - a) * origBgB) / safeA)
+    );
+
+    data[idx] = Math.round(a * fgR + (1 - a) * targetR);
+    data[idx + 1] = Math.round(a * fgG + (1 - a) * targetG);
+    data[idx + 2] = Math.round(a * fgB + (1 - a) * targetB);
+  }
+
+  ctx.putImageData(imgData, 0, 0);
+}
+
+// ============================================================================
 // MAIN PIPELINE (EXACT PORT OF xu_ly FROM anh_the.py: A -> B -> A2 -> C)
 // ============================================================================
 
 /**
  * Runs the complete 3x4 ID photo extraction pipeline from `anh_the.py`:
- *   A.  Tìm khuôn mặt -> lần theo phông nền quanh đầu (`tim_khung_theo_phong`). Chỉ tin ngay khi `do_mau >= PHONG_CO_MAU` (16.0).
+ *   A.  Tìm khuôn mặt -> lần theo phông nền quanh đầu (`tim_khung_theo_phong`). Chỉ tin khi `do_mau >= PHONG_CO_MAU` (16.0).
  *   B.  Tìm tờ giấy ảnh theo đường mép trên nền trơn (`tim_to_anh`) -> nắn thẳng -> xác nhận khuôn mặt -> bỏ viền giấy (`khung_trong_to`).
  *   A2. Tìm 3 đường thẳng dài (trái, phải, trên) quanh từng khuôn mặt ứng viên (`tim_khung_theo_mep`) cho ảnh phông trắng dán trên hồ sơ.
- *   C.  Cắt khung 3:4 quanh khuôn mặt (`cat_theo_mat`), không nắn (đánh dấu "XEM").
+ *   C.  Cắt khung 3:4 quanh khuôn mặt (`cat_theo_mat`), không nắn; tách người khỏi nền bằng mô hình AI (MODNet/SelfieSegmenter) đặt lên phông trơn theo `--phong`.
  */
 export async function detectFacesInImage(img: HTMLImageElement): Promise<{
   faces: DetectedFaceBox[];
@@ -2842,24 +3803,57 @@ export async function detectFacesInImage(img: HTMLImageElement): Promise<{
 }> {
   const imgW = img.naturalWidth || img.width;
   const imgH = img.naturalHeight || img.height;
+  const defaultCfg = loadDefaultCauHinh();
 
-  const detectedFaces: DetectedFaceBox[] = [];
-  const skinCandidates = findSkinHairFaceCandidates(img, imgW, imgH);
+  let rawFaces: DetectedFaceBox[] = [];
   const mpDetector = await getMediaPipeFaceDetector();
 
   if (mpDetector) {
     try {
-      const fullPass = await runMediaPipeOnRoi(
-        mpDetector,
-        img,
-        0,
-        0,
-        imgW,
-        imgH
-      );
-      detectedFaces.push(...fullPass);
+      // 1) Full image pass at high resolution (1024px) AND medium resolution (512px)
+      const [fullHi, fullMid] = await Promise.all([
+        runMediaPipeOnRoi(mpDetector, img, 0, 0, imgW, imgH, 1024),
+        runMediaPipeOnRoi(mpDetector, img, 0, 0, imgW, imgH, 512),
+      ]);
+      rawFaces.push(...fullHi, ...fullMid);
 
-      if (detectedFaces.length === 0) {
+      // 2) Multi-scale overlapping pyramid crops when no high-confidence face was found yet
+      // (essential when a small 3x4 white-background photo is glued onto a large A4 document or lying on a desk!)
+      const bestConfSoFar = rawFaces.reduce(
+        (m, f) => Math.max(m, f.confidence),
+        0
+      );
+      if (bestConfSoFar < 0.72) {
+        const rois: Array<[number, number, number, number]> = [
+          // Center 60% crop
+          [imgW * 0.2, imgH * 0.15, imgW * 0.6, imgH * 0.65],
+          // 2x2 overlapping quadrants (covering top-left / top-right where ID photos are glued on hồ sơ)
+          [0, 0, imgW * 0.62, imgH * 0.62],
+          [imgW * 0.38, 0, imgW * 0.62, imgH * 0.62],
+          [0, imgH * 0.38, imgW * 0.62, imgH * 0.62],
+          [imgW * 0.38, imgH * 0.38, imgW * 0.62, imgH * 0.62],
+          // Top-center crop
+          [imgW * 0.22, 0, imgW * 0.56, imgH * 0.58],
+        ];
+        for (const [rx, ry, rw, rh] of rois) {
+          const subFaces = await runMediaPipeOnRoi(
+            mpDetector,
+            img,
+            rx,
+            ry,
+            rw,
+            rh,
+            640
+          );
+          if (subFaces.length > 0) {
+            rawFaces.push(...subFaces);
+          }
+        }
+      }
+
+      // 3) Check skin-hair candidate ROIs if still empty
+      if (rawFaces.length === 0) {
+        const skinCandidates = findSkinHairFaceCandidates(img, imgW, imgH);
         for (const cand of skinCandidates.slice(0, 3)) {
           const padW = cand.width * 2.2;
           const padH = cand.height * 2.6;
@@ -2873,30 +3867,12 @@ export async function detectFacesInImage(img: HTMLImageElement): Promise<{
             rx,
             ry,
             rw,
-            rh
+            rh,
+            640
           );
           if (roiFaces.length > 0) {
-            detectedFaces.push(...roiFaces);
-            break;
+            rawFaces.push(...roiFaces);
           }
-        }
-      }
-
-      if (detectedFaces.length === 0) {
-        const cx = imgW * 0.2;
-        const cy = imgH * 0.2;
-        const cw = imgW * 0.6;
-        const ch = imgH * 0.6;
-        const centerFaces = await runMediaPipeOnRoi(
-          mpDetector,
-          img,
-          cx,
-          cy,
-          cw,
-          ch
-        );
-        if (centerFaces.length > 0) {
-          detectedFaces.push(...centerFaces);
         }
       }
     } catch (err) {
@@ -2904,19 +3880,14 @@ export async function detectFacesInImage(img: HTMLImageElement): Promise<{
     }
   }
 
-  if (detectedFaces.length === 0 && skinCandidates.length > 0) {
-    detectedFaces.push(...skinCandidates);
+  if (rawFaces.length === 0) {
+    rawFaces = findSkinHairFaceCandidates(img, imgW, imgH);
   }
 
-  // Sort candidate faces by confidence & reasonable size (up to SO_MAT_THU = 6)
-  detectedFaces.sort(
-    (a, b) =>
-      b.confidence * Math.sqrt(b.width * b.height) -
-      a.confidence * Math.sqrt(a.width * a.height)
-  );
+  const detectedFaces = deduplicateFacesNms(rawFaces);
   const candidateFaces = detectedFaces.slice(0, SO_MAT_THU);
 
-  const buildFinalResult = (
+  const buildFinalResult = async (
     corners: QuadCorners,
     faceBox: DetectedFaceBox | null,
     method: AutoCropMethod,
@@ -2948,13 +3919,47 @@ export async function detectFacesInImage(img: HTMLImageElement): Promise<{
         faceBox.x + faceBox.width,
         faceBox.y + faceBox.height
       );
-      if (Math.abs(p1[0] - p0[0]) > 0.2) {
+      if (Math.abs(p1[0] - p0[0]) > 0.18) {
         normalizedFaceInCard = [
           Math.max(0, Math.min(1, p0[0])),
           Math.max(0, Math.min(1, p0[1])),
           Math.max(0, Math.min(1, p1[0])),
           Math.max(0, Math.min(1, p1[1])),
         ];
+      }
+    }
+
+    // Only precompute portrait segmentation alpha matte if defaultCfg.phong !== 'giu'
+    let personAlphaMatte: Float32Array | undefined;
+    if (defaultCfg.phong !== 'giu' && (method === 'C' || defaultCfg.epPhong)) {
+      try {
+        const { canvas: thangCanvas } = nanThangQuadToCanvas(img, corners, TI_LE);
+        const matteCanvas = document.createElement('canvas');
+        matteCanvas.width = OUTPUT_3X4_WIDTH_PX;
+        matteCanvas.height = OUTPUT_3X4_HEIGHT_PX;
+        const mCtx = matteCanvas.getContext('2d');
+        if (mCtx) {
+          const trimRatio = method === 'C' ? 0 : defaultCfg.boVien;
+          const lx = Math.round(thangCanvas.width * trimRatio);
+          const ly = Math.round(thangCanvas.height * trimRatio);
+          mCtx.drawImage(
+            thangCanvas,
+            lx,
+            ly,
+            Math.max(8, thangCanvas.width - 2 * lx),
+            Math.max(8, thangCanvas.height - 2 * ly),
+            0,
+            0,
+            OUTPUT_3X4_WIDTH_PX,
+            OUTPUT_3X4_HEIGHT_PX
+          );
+          personAlphaMatte = await computePortraitAlphaMatte(
+            matteCanvas,
+            normalizedFaceInCard
+          );
+        }
+      } catch {
+        // non-fatal
       }
     }
 
@@ -2977,53 +3982,46 @@ export async function detectFacesInImage(img: HTMLImageElement): Promise<{
         flipH: false,
         brightness: 100,
         contrast: 100,
-        sharpen: true,
+        sharpen: defaultCfg.muc > 0,
         aspectRatio: TI_LE,
         methodUsed: method,
         methodDescription: description,
         needsReview,
         quadCorners: corners,
-        enhanceLevel: 2 as const,
-        removeRedStamp: true,
-        borderTrimRatio: DEFAULT_BO_VIEN,
+        enhanceLevel: defaultCfg.muc,
+        removeRedStamp: !defaultCfg.giuDau,
+        borderTrimRatio: defaultCfg.boVien,
         detectedStamps: vongDau,
         surroundingPaperRgb: trangGiay,
         normalizedFaceInCard,
+        backdropMode: defaultCfg.phong,
+        customBackdropHex: defaultCfg.customHex,
+        forceBackdrop: defaultCfg.epPhong,
+        personAlphaMatte,
       },
     };
   };
 
   // --- STEP A: Tìm khuôn mặt -> lần theo phông nền quanh đầu (`tim_khung_theo_phong`).
-  // Chỉ tin ngay khi phông có màu (`do_mau >= PHONG_CO_MAU` = 16.0).
-  let khungTot: {
-    face: DetectedFaceBox;
-    corners: QuadCorners;
-    doMau: number;
-  } | null = null;
-
+  // STRICT RULE: Chỉ tin khi phông có màu (`do_mau >= PHONG_CO_MAU` = 16.0, ví dụ phông xanh).
+  // Tuyệt đối không dùng Cách A cho ảnh phông trắng / không có khung xanh!
   for (const face of candidateFaces) {
     const kq = timKhungTheoPhong(img, face);
-    if (kq) {
-      khungTot = { face, corners: kq.corners, doMau: kq.doMau };
-      break;
+    if (kq && kq.doMau >= PHONG_CO_MAU) {
+      return await buildFinalResult(
+        kq.corners,
+        face,
+        'A',
+        'Cách A: Lần phông nền có màu quanh đầu → Lấy mép trên & 2 mép bên → Nắn thẳng 3:4',
+        false
+      );
     }
-  }
-
-  if (khungTot && khungTot.doMau >= PHONG_CO_MAU) {
-    return buildFinalResult(
-      khungTot.corners,
-      khungTot.face,
-      'A',
-      'Cách A: Lần phông nền có màu quanh đầu → Lấy mép trên & 2 mép bên → Nắn thẳng 3:4',
-      false
-    );
   }
 
   // --- STEP B: Tìm tờ giấy ảnh theo đường mép trên nền trơn (`tim_to_anh`) -> nắn thẳng,
   // xoay đúng chiều (`xoay_tam_anh`) -> xác nhận có khuôn mặt bên trong -> bỏ viền giấy (`khung_trong_to`).
   const cacTo = timToAnh(img).slice(0, 4);
   for (const rawGocTo of cacTo) {
-    // Permutation of corners for 0°, 90° CW, 180°, 270° CW (matches xoay_tam_anh in anh_the.py)
     const d01 = Math.hypot(
       rawGocTo[1][0] - rawGocTo[0][0],
       rawGocTo[1][1] - rawGocTo[0][1]
@@ -3032,7 +4030,6 @@ export async function detectFacesInImage(img: HTMLImageElement): Promise<{
       rawGocTo[3][0] - rawGocTo[0][0],
       rawGocTo[3][1] - rawGocTo[0][1]
     );
-    // Start with portrait orientation first (like `if to.shape[1] > to.shape[0]: rotate_90` in anh_the.py)
     const baseQuad: QuadCorners =
       d01 > d03
         ? [rawGocTo[3], rawGocTo[0], rawGocTo[1], rawGocTo[2]]
@@ -3050,7 +4047,6 @@ export async function detectFacesInImage(img: HTMLImageElement): Promise<{
       const tw = toCanvas.width;
       const th = toCanvas.height;
 
-      // Confirm a face exists inside `gocTo`
       let faceInSheet: {
         x: number;
         y: number;
@@ -3083,10 +4079,23 @@ export async function detectFacesInImage(img: HTMLImageElement): Promise<{
             );
             const fwSheet = Math.abs(urx - ulx);
             const fhSheet = Math.abs(ury - uly);
-            if (0.22 <= fwSheet / tw && fwSheet / tw <= MAT_RONG_MAX) {
+            const fxMin = Math.min(ulx, urx);
+            const fyMin = Math.min(uly, ury);
+            const relCx = (fxMin + fwSheet / 2) / tw;
+            const relCy = (fyMin + fhSheet / 2) / th;
+            // Strict face-in-sheet proportions: centered horizontally, in upper half, with headroom & torso room
+            if (
+              MAT_RONG_MIN <= fwSheet / tw &&
+              fwSheet / tw <= MAT_RONG_MAX &&
+              0.28 <= relCx &&
+              relCx <= 0.72 &&
+              0.18 <= relCy &&
+              relCy <= 0.56 &&
+              fyMin >= 0.04 * th
+            ) {
               faceInSheet = {
-                x: Math.min(ulx, urx),
-                y: Math.min(uly, ury),
+                x: fxMin,
+                y: fyMin,
                 width: fwSheet,
                 height: fhSheet,
                 origFace: f,
@@ -3105,10 +4114,21 @@ export async function detectFacesInImage(img: HTMLImageElement): Promise<{
           0,
           0,
           tw,
-          th
+          th,
+          640
         );
         for (const sf of sheetFaces) {
-          if (0.22 <= sf.width / tw && sf.width / tw <= MAT_RONG_MAX) {
+          const relCx = (sf.x + sf.width / 2) / tw;
+          const relCy = (sf.y + sf.height / 2) / th;
+          if (
+            MAT_RONG_MIN <= sf.width / tw &&
+            sf.width / tw <= MAT_RONG_MAX &&
+            0.28 <= relCx &&
+            relCx <= 0.72 &&
+            0.18 <= relCy &&
+            relCy <= 0.56 &&
+            sf.y >= 0.04 * th
+          ) {
             faceInSheet = {
               x: sf.x,
               y: sf.y,
@@ -3156,7 +4176,7 @@ export async function detectFacesInImage(img: HTMLImageElement): Promise<{
         applyHomographyPoint(invH, gocTrong[3][0], gocTrong[3][1]),
       ];
 
-      return buildFinalResult(
+      return await buildFinalResult(
         gocGlobal,
         faceInSheet.origFace || candidateFaces[0] || null,
         'B',
@@ -3167,6 +4187,7 @@ export async function detectFacesInImage(img: HTMLImageElement): Promise<{
   }
 
   // --- STEP A2: Tìm ba đường thẳng dài (mép trái, phải, trên) quanh từng khuôn mặt ứng viên (`tim_khung_theo_mep`).
+  // Dùng cho ảnh phông trắng dán trên hồ sơ, nơi xung quanh toàn chữ và dấu.
   let totMep: {
     score: number;
     corners: QuadCorners;
@@ -3181,29 +4202,32 @@ export async function detectFacesInImage(img: HTMLImageElement): Promise<{
   }
 
   if (totMep) {
-    return buildFinalResult(
+    return await buildFinalResult(
       totMep.corners,
       totMep.face,
       'A2',
-      'Cách A2: Tìm 3 đường thẳng dài (mép trái, phải, trên) quanh khuôn mặt trên hồ sơ',
+      'Cách A2: Tìm 3 đường thẳng dài (mép trái, phải, trên) quanh khuôn mặt cho ảnh phông trắng dán trên hồ sơ',
       false
     );
   }
 
-  // Fallback: Phông nhạt màu mà không thấy mép tờ giấy lẫn 3 đường thẳng -> dùng khungTot và đánh dấu XEM
-  if (khungTot) {
-    return buildFinalResult(
-      khungTot.corners,
-      khungTot.face,
-      'A',
-      'Cách A (XEM): Phông nền nhạt màu, mép ảnh có thể chưa chuẩn',
-      true
+  // --- STEP C: Cắt khung 3:4 quanh khuôn mặt (`cat_theo_mat`), không nắn.
+  // Dùng cho ảnh chụp người trực tiếp hoặc ảnh phông trắng không có khung viền ngoài.
+  const primaryFace = candidateFaces[0] || null;
+  if (primaryFace) {
+    const cornersC = catTheoMat(imgW, imgH, primaryFace);
+    return await buildFinalResult(
+      cornersC,
+      primaryFace,
+      'C',
+      'Cách C: Cắt khung 3:4 tập trung vào khuôn mặt (tự động tách nền & đặt lên phông trơn theo --phong)',
+      false
     );
   }
 
-  // Fallback: Thấy tờ ảnh trên nền bàn nhưng không dò ra khuôn mặt -> cắt theo tờ ảnh lớn nhất và đánh dấu XEM
-  if (cacTo.length > 0 && candidateFaces.length === 0) {
-    return buildFinalResult(
+  // Fallback: Thấy tờ ảnh trên nền bàn nhưng không dò ra khuôn mặt -> cắt theo tờ ảnh lớn nhất
+  if (cacTo.length > 0) {
+    return await buildFinalResult(
       cacTo[0],
       null,
       'B',
@@ -3212,21 +4236,8 @@ export async function detectFacesInImage(img: HTMLImageElement): Promise<{
     );
   }
 
-  // --- STEP C: Cắt khung 3:4 quanh khuôn mặt (`cat_theo_mat`), không nắn (đánh dấu "XEM").
-  const primaryFace = candidateFaces[0] || null;
-  if (primaryFace) {
-    const cornersC = catTheoMat(imgW, imgH, primaryFace);
-    return buildFinalResult(
-      cornersC,
-      primaryFace,
-      'C',
-      'Cách C (XEM): Không tìm được mép ảnh thẻ, cắt khung 3:4 quanh khuôn mặt (không nắn)',
-      true
-    );
-  }
-
   // Ultimate fallback when no face or card was found
-  const fitH = Math.min(imgH, imgW / TI_LE) * 0.6;
+  const fitH = Math.min(imgH, imgW / TI_LE) * 0.65;
   const fitW = fitH * TI_LE;
   const x0 = (imgW - fitW) / 2;
   const y0 = (imgH - fitH) / 2;
@@ -3236,7 +4247,7 @@ export async function detectFacesInImage(img: HTMLImageElement): Promise<{
     [x0 + fitW, y0 + fitH],
     [x0, y0 + fitH],
   ];
-  return buildFinalResult(
+  return await buildFinalResult(
     defaultQuad,
     null,
     'C',
@@ -3255,6 +4266,7 @@ export function computeIdCropConfigFromFace(
   aspectRatio: number = TI_LE,
   preferCardBoundary = true
 ): CropTransformConfig {
+  const defaultCfg = loadDefaultCauHinh();
   if (face?.photoCardRect && preferCardBoundary) {
     const rect = face.photoCardRect;
     const adjustedH =
@@ -3270,19 +4282,22 @@ export function computeIdCropConfigFromFace(
       flipH: false,
       brightness: 100,
       contrast: 100,
-      sharpen: true,
+      sharpen: defaultCfg.muc > 0,
       aspectRatio,
       methodUsed: rect.method || 'A',
       needsReview: false,
       quadCorners: rect.corners,
-      enhanceLevel: 2,
-      removeRedStamp: true,
-      borderTrimRatio: DEFAULT_BO_VIEN,
+      enhanceLevel: defaultCfg.muc,
+      removeRedStamp: !defaultCfg.giuDau,
+      borderTrimRatio: defaultCfg.boVien,
+      backdropMode: defaultCfg.phong,
+      customBackdropHex: defaultCfg.customHex,
+      forceBackdrop: defaultCfg.epPhong,
     };
   }
 
   if (!face) {
-    const fitH = Math.min(imgHeight, imgWidth / aspectRatio) * 0.5;
+    const fitH = Math.min(imgHeight, imgWidth / aspectRatio) * 0.6;
     return {
       centerX: imgWidth / 2,
       centerY: imgHeight / 2,
@@ -3292,13 +4307,16 @@ export function computeIdCropConfigFromFace(
       flipH: false,
       brightness: 100,
       contrast: 100,
-      sharpen: true,
+      sharpen: defaultCfg.muc > 0,
       aspectRatio,
       methodUsed: 'C',
       needsReview: true,
-      enhanceLevel: 2,
-      removeRedStamp: true,
-      borderTrimRatio: DEFAULT_BO_VIEN,
+      enhanceLevel: defaultCfg.muc,
+      removeRedStamp: !defaultCfg.giuDau,
+      borderTrimRatio: defaultCfg.boVien,
+      backdropMode: defaultCfg.phong,
+      customBackdropHex: defaultCfg.customHex,
+      forceBackdrop: defaultCfg.epPhong,
     };
   }
 
@@ -3306,6 +4324,18 @@ export function computeIdCropConfigFromFace(
   const cornersC = catTheoMat(imgWidth, imgHeight, face);
   const wC = cornersC[1][0] - cornersC[0][0];
   const hC = cornersC[2][1] - cornersC[0][1];
+  const normalizedFaceInCard: [number, number, number, number] = [
+    Math.max(0, Math.min(1, (face.x - cornersC[0][0]) / Math.max(1, wC))),
+    Math.max(0, Math.min(1, (face.y - cornersC[0][1]) / Math.max(1, hC))),
+    Math.max(
+      0,
+      Math.min(1, (face.x + face.width - cornersC[0][0]) / Math.max(1, wC))
+    ),
+    Math.max(
+      0,
+      Math.min(1, (face.y + face.height - cornersC[0][1]) / Math.max(1, hC))
+    ),
+  ];
   return {
     centerX: cornersC[0][0] + wC / 2,
     centerY: cornersC[0][1] + hC / 2,
@@ -3315,16 +4345,20 @@ export function computeIdCropConfigFromFace(
     flipH: false,
     brightness: 100,
     contrast: 100,
-    sharpen: true,
+    sharpen: defaultCfg.muc > 0,
     aspectRatio,
     methodUsed: 'C',
     methodDescription:
-      'Cách C (XEM): Cắt khung 3:4 quanh khuôn mặt (MAT_RONG=0.52, MAT_Y=0.17), không nắn',
-    needsReview: true,
+      'Cách C: Cắt khung 3:4 quanh khuôn mặt (MAT_RONG=0.52, MAT_Y=0.17), không nắn',
+    needsReview: false,
     quadCorners: cornersC,
-    enhanceLevel: 2,
-    removeRedStamp: true,
-    borderTrimRatio: DEFAULT_BO_VIEN,
+    enhanceLevel: defaultCfg.muc,
+    removeRedStamp: !defaultCfg.giuDau,
+    borderTrimRatio: defaultCfg.boVien,
+    normalizedFaceInCard,
+    backdropMode: defaultCfg.phong,
+    customBackdropHex: defaultCfg.customHex,
+    forceBackdrop: defaultCfg.epPhong,
   };
 }
 
@@ -3360,24 +4394,21 @@ export function tryMethodB_TableColorBlockDeskew(
 }
 
 /**
- * Renders the final cropped, perspective-deskewed, stamp-cleaned, and beautified 3x4 ID photo:
- *   - Default output size: `354 x 472 px` (`3x4 cm @ 300 DPI`)
- *   - Border trim `bo_mep(thang, 0.012)`
- *   - Red stamp removal `xoa_dau_do` (when `config.removeRedStamp !== false`)
- *   - Beautification `hoan_thien` at level `muc = 0..3` (default `2` when `config.sharpen !== false`)
+ * Internal helper that renders the base beautified 3x4 canvas BEFORE backdrop replacement,
+ * or applies a specific target backdrop RGB (`targetBackdropRgb`).
  */
-export function renderCroppedIdPhotoToDataUrl(
+function renderBaseCroppedCanvas(
   img: HTMLImageElement,
   config: CropTransformConfig,
-  outputWidth = OUTPUT_3X4_WIDTH_PX
-): string {
+  outputWidth = OUTPUT_3X4_WIDTH_PX,
+  targetBackdropRgb: [number, number, number] | null = null
+): HTMLCanvasElement {
   const outputHeight =
     Math.abs(config.aspectRatio - TI_LE) < 0.01 &&
     outputWidth === OUTPUT_3X4_WIDTH_PX
       ? OUTPUT_3X4_HEIGHT_PX
       : Math.round(outputWidth / config.aspectRatio);
 
-  // Use exact perspective warp (`nan_thang`) when `quadCorners` is present and user hasn't manually panned/zoomed away
   let workingCanvas: HTMLCanvasElement;
 
   if (config.quadCorners && Math.abs(config.scale - 1) < 0.01) {
@@ -3387,7 +4418,6 @@ export function renderCroppedIdPhotoToDataUrl(
       config.aspectRatio
     );
 
-    // Optional red stamp removal (`xoa_dau_do`)
     if (
       config.removeRedStamp !== false &&
       config.detectedStamps &&
@@ -3407,7 +4437,6 @@ export function renderCroppedIdPhotoToDataUrl(
 
     workingCanvas = thangCanvas;
   } else {
-    // Manual transform (centerX, centerY, scale, rotationDeg)
     const cropH = config.baseCropHeight / Math.max(0.08, config.scale);
     const cropW = cropH * config.aspectRatio;
     const rad = (config.rotationDeg * Math.PI) / 180;
@@ -3436,7 +4465,6 @@ export function renderCroppedIdPhotoToDataUrl(
     workingCanvas = thangCanvas;
   }
 
-  // Apply border trim `bo_mep(thang, bo_vien)` (default 0.012 as in anh_the.py)
   const trimRatio =
     config.methodUsed === 'C' ? 0 : (config.borderTrimRatio ?? DEFAULT_BO_VIEN);
   const wSrc = workingCanvas.width;
@@ -3450,17 +4478,14 @@ export function renderCroppedIdPhotoToDataUrl(
   finalCanvas.width = outputWidth;
   finalCanvas.height = outputHeight;
   const ctx = finalCanvas.getContext('2d');
-  if (!ctx) return '';
+  if (!ctx) return finalCanvas;
 
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, outputWidth, outputHeight);
 
-  if (
-    config.brightness !== 100 ||
-    config.contrast !== 100
-  ) {
+  if (config.brightness !== 100 || config.contrast !== 100) {
     ctx.filter = `brightness(${config.brightness}%) contrast(${config.contrast}%)`;
   }
 
@@ -3509,7 +4534,127 @@ export function renderCroppedIdPhotoToDataUrl(
     );
   }
 
-  return finalCanvas.toDataURL('image/jpeg', 0.95);
+  // Apply backdrop replacement when `targetBackdropRgb` is specified
+  if (targetBackdropRgb) {
+    const canUseCachedMatte =
+      config.personAlphaMatte &&
+      outputWidth === OUTPUT_3X4_WIDTH_PX &&
+      outputHeight === OUTPUT_3X4_HEIGHT_PX;
+    compositeBackdropOnCanvas(
+      ctx,
+      outputWidth,
+      outputHeight,
+      targetBackdropRgb,
+      canUseCachedMatte ? config.personAlphaMatte : undefined,
+      config.normalizedFaceInCard
+    );
+  }
+
+  return finalCanvas;
+}
+
+/**
+ * Determines whether backdrop replacement (`--phong`) should be active for `config`:
+ * - Default mode is `'giu'` (keep original background) so background removal only runs when requested.
+ * - When `mode !== 'giu'`, active when `methodUsed === 'C'` or `forceBackdrop` (`--ep-phong`) is true.
+ */
+export function isBackdropReplacementActive(
+  config: CropTransformConfig
+): boolean {
+  const mode = config.backdropMode ?? 'giu';
+  if (mode === 'giu') return false;
+  return config.methodUsed === 'C' || Boolean(config.forceBackdrop);
+}
+
+/**
+ * Computes the 354x472 neural portrait alpha matte for a given `img` + `config`.
+ */
+export async function computePortraitAlphaMatteForConfig(
+  img: HTMLImageElement,
+  config: CropTransformConfig,
+  outputWidth = OUTPUT_3X4_WIDTH_PX
+): Promise<Float32Array> {
+  const baseCanvas = renderBaseCroppedCanvas(
+    img,
+    { ...config, personAlphaMatte: undefined },
+    outputWidth,
+    null
+  );
+  return computePortraitAlphaMatte(baseCanvas, config.normalizedFaceInCard);
+}
+
+/**
+ * Renders both White and Blue variants when `--phong` is `ca-hai` (or the selected single backdrop).
+ */
+export function renderCroppedIdPhotoVariants(
+  img: HTMLImageElement,
+  config: CropTransformConfig,
+  outputWidth = OUTPUT_3X4_WIDTH_PX
+): {
+  primaryDataUrl: string;
+  whiteDataUrl: string | null;
+  blueDataUrl: string | null;
+} {
+  const active = isBackdropReplacementActive(config);
+  const mode = config.backdropMode ?? 'giu';
+
+  if (!active) {
+    const c = renderBaseCroppedCanvas(img, config, outputWidth, null);
+    return {
+      primaryDataUrl: c.toDataURL('image/jpeg', 0.95),
+      whiteDataUrl: null,
+      blueDataUrl: null,
+    };
+  }
+
+  if (mode === 'ca-hai') {
+    const whiteCanvas = renderBaseCroppedCanvas(
+      img,
+      config,
+      outputWidth,
+      [255, 255, 255]
+    );
+    const blueCanvas = renderBaseCroppedCanvas(
+      img,
+      config,
+      outputWidth,
+      [35, 97, 184]
+    );
+    const whiteDataUrl = whiteCanvas.toDataURL('image/jpeg', 0.95);
+    const blueDataUrl = blueCanvas.toDataURL('image/jpeg', 0.95);
+    return {
+      primaryDataUrl: whiteDataUrl,
+      whiteDataUrl,
+      blueDataUrl,
+    };
+  }
+
+  const targetRgb: [number, number, number] =
+    mode === 'trang'
+      ? [255, 255, 255]
+      : mode === 'xanh'
+        ? [35, 97, 184]
+        : parseHexToRgb(config.customBackdropHex || STANDARD_ID_BLUE_HEX);
+
+  const c = renderBaseCroppedCanvas(img, config, outputWidth, targetRgb);
+  const url = c.toDataURL('image/jpeg', 0.95);
+  return {
+    primaryDataUrl: url,
+    whiteDataUrl: mode === 'trang' ? url : null,
+    blueDataUrl: mode === 'xanh' ? url : null,
+  };
+}
+
+/**
+ * Renders the final cropped, perspective-deskewed, stamp-cleaned, beautified, and backdrop-composited 3x4 ID photo:
+ *   - Default output size: `354 x 472 px` (`3x4 cm @ 300 DPI`)
+ */
+export function renderCroppedIdPhotoToDataUrl(
+  img: HTMLImageElement,
+  config: CropTransformConfig,
+  outputWidth = OUTPUT_3X4_WIDTH_PX
+): string {
+  return renderCroppedIdPhotoVariants(img, config, outputWidth).primaryDataUrl;
 }
 
 /**
@@ -3538,6 +4683,8 @@ export async function autoCropFileWithFaceAI(
   outputWidth = OUTPUT_3X4_WIDTH_PX
 ): Promise<{
   dataUrl: string;
+  whiteDataUrl: string | null;
+  blueDataUrl: string | null;
   faceDetected: boolean;
   faceCount: number;
   methodUsed: AutoCropMethod;
@@ -3549,9 +4696,11 @@ export async function autoCropFileWithFaceAI(
     ...recommendedConfig,
     aspectRatio,
   };
-  const dataUrl = renderCroppedIdPhotoToDataUrl(img, finalConfig, outputWidth);
+  const variants = renderCroppedIdPhotoVariants(img, finalConfig, outputWidth);
   return {
-    dataUrl,
+    dataUrl: variants.primaryDataUrl,
+    whiteDataUrl: variants.whiteDataUrl,
+    blueDataUrl: variants.blueDataUrl,
     faceDetected: faces.length > 0,
     faceCount: faces.length,
     methodUsed: recommendedConfig.methodUsed || 'C',

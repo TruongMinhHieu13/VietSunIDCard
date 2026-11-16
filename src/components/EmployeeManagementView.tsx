@@ -18,8 +18,15 @@ import {
   Camera,
   CheckCircle2,
   ScanFace,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Building2,
+  Plus,
+  Check,
 } from 'lucide-react';
-import { CardTemplate, Employee } from '../types';
+import { CardTemplate, Department, Employee } from '../types';
 import { IdCardPreview } from './IdCardPreview';
 import {
   downloadSampleExcelTemplate,
@@ -59,8 +66,18 @@ export function parseDateToUtcTimestamp(dateStr: string): number | null {
   return isNaN(parsed) ? null : parsed;
 }
 
+function getTodayFormattedDDMMYYYY(): string {
+  const now = new Date();
+  const dd = String(now.getDate()).padStart(2, '0');
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const yyyy = now.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+
 interface EmployeeManagementViewProps {
   employees: Employee[];
+  departments: Department[];
   selectedTemplate: CardTemplate;
   selectedEmployeeIds: Set<string>;
   onChangeSelectedIds: (ids: Set<string>) => void;
@@ -83,6 +100,9 @@ interface EmployeeManagementViewProps {
   ) => Promise<void>;
   onDeleteEmployee: (id: string) => Promise<void>;
   onBatchDeleteEmployees: (ids: string[]) => Promise<void>;
+  onAddDepartment: (name: string) => Promise<Department>;
+  onUpdateDepartment: (id: string, name: string) => Promise<void>;
+  onDeleteDepartment: (id: string) => Promise<void>;
   onOpenImportModal: () => void;
   onGoToBatchPrint: () => void;
   onOpenPrintDialog: (employeeIds?: string[]) => void;
@@ -91,6 +111,7 @@ interface EmployeeManagementViewProps {
 
 export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
   employees,
+  departments,
   selectedTemplate,
   selectedEmployeeIds,
   onChangeSelectedIds,
@@ -98,6 +119,9 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
   onUpdateEmployee,
   onDeleteEmployee,
   onBatchDeleteEmployees,
+  onAddDepartment,
+  onUpdateDepartment,
+  onDeleteDepartment,
   onOpenImportModal,
   onGoToBatchPrint,
   onOpenPrintDialog,
@@ -108,6 +132,8 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
   const [printStatusFilter, setPrintStatusFilter] = useState<'ALL' | 'PRINTED' | 'UNPRINTED'>('ALL');
   const [joinDateFrom, setJoinDateFrom] = useState('');
   const [joinDateTo, setJoinDateTo] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(10);
 
   // Add/Edit Modal State
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -115,7 +141,7 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
   const [msnv, setMsnv] = useState('');
   const [fullName, setFullName] = useState('');
   const [department, setDepartment] = useState('');
-  const [joinDate, setJoinDate] = useState('');
+  const [joinDate, setJoinDate] = useState(() => getTodayFormattedDDMMYYYY());
   const [photoUrl, setPhotoUrl] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -138,12 +164,27 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
   const [deletingEmployee, setDeletingEmployee] = useState<Employee | null>(null);
   const [confirmBatchDelete, setConfirmBatchDelete] = useState(false);
 
-  const departments = useMemo(() => {
-    const set = new Set<string>();
+  // Department Management Popup Modal State
+  const [isDeptModalOpen, setIsDeptModalOpen] = useState(false);
+  const [newDeptName, setNewDeptName] = useState('');
+  const [editingDeptId, setEditingDeptId] = useState<string | null>(null);
+  const [editingDeptName, setEditingDeptName] = useState('');
+  const [deptModalError, setDeptModalError] = useState<string | null>(null);
+  const [isSavingDept, setIsSavingDept] = useState(false);
+
+  const departmentNames = useMemo(() => {
+    return departments.map((d) => d.name);
+  }, [departments]);
+
+  const employeeCountByDept = useMemo(() => {
+    const counts = new Map<string, number>();
     employees.forEach((emp) => {
-      if (emp.department) set.add(emp.department);
+      const key = (emp.department || '').trim();
+      if (key) {
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
     });
-    return Array.from(set).sort();
+    return counts;
   }, [employees]);
 
   const filteredEmployees = useMemo(() => {
@@ -177,12 +218,42 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
     });
   }, [employees, searchQuery, deptFilter, printStatusFilter, joinDateFrom, joinDateTo]);
 
+  const totalPages = Math.max(1, Math.ceil(filteredEmployees.length / pageSize));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+  const paginatedEmployees = useMemo(() => {
+    const startIdx = (safeCurrentPage - 1) * pageSize;
+    return filteredEmployees.slice(startIdx, startIdx + pageSize);
+  }, [filteredEmployees, safeCurrentPage, pageSize]);
+
+  const visiblePageNumbers = useMemo(() => {
+    const pages: (number | 'ellipsis-start' | 'ellipsis-end')[] = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+      return pages;
+    }
+    pages.push(1);
+    if (safeCurrentPage > 3) {
+      pages.push('ellipsis-start');
+    }
+    const start = Math.max(2, safeCurrentPage - 1);
+    const end = Math.min(totalPages - 1, safeCurrentPage + 1);
+    for (let i = start; i <= end; i++) {
+      pages.push(i);
+    }
+    if (safeCurrentPage < totalPages - 2) {
+      pages.push('ellipsis-end');
+    }
+    pages.push(totalPages);
+    return pages;
+  }, [totalPages, safeCurrentPage]);
+
   const openAddModal = () => {
     setEditingEmployee(null);
     setMsnv('');
     setFullName('');
-    setDepartment(departments[0] || 'Bảo trì vận hành');
-    setJoinDate('02/10/2026');
+    setDepartment(departmentNames[0] || '');
+    setJoinDate(getTodayFormattedDDMMYYYY());
     setPhotoUrl('');
     setFormError(null);
     setIsFormOpen(true);
@@ -361,6 +432,7 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
           joinDate: dateClean,
           photoUrl,
         });
+        setCurrentPage(1);
       }
       setIsFormOpen(false);
     } catch (err) {
@@ -471,6 +543,21 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
 
           <button
             type="button"
+            onClick={() => {
+              setDeptModalError(null);
+              setNewDeptName('');
+              setEditingDeptId(null);
+              setIsDeptModalOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold text-teal-800 bg-teal-50 border border-teal-200 hover:bg-teal-100 rounded-lg cursor-pointer transition-colors"
+            title="Quản lý danh sách bộ phận phòng ban (Thêm / Sửa / Xóa)"
+          >
+            <Building2 className="w-4 h-4 text-teal-700" />
+            + Thêm Bộ Phận ({departments.length})
+          </button>
+
+          <button
+            type="button"
             onClick={openAddModal}
             className="inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg cursor-pointer transition-colors"
           >
@@ -516,8 +603,8 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
               onChange={(e) => setDeptFilter(e.target.value)}
               className="px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700"
             >
-              <option value="ALL">Tất cả bộ phận ({departments.length})</option>
-              {departments.map((dept) => (
+              <option value="ALL">Tất cả bộ phận ({departmentNames.length})</option>
+              {departmentNames.map((dept) => (
                 <option key={dept} value={dept}>
                   {dept}
                 </option>
@@ -678,7 +765,17 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {filteredEmployees.map((emp) => {
+                {paginatedEmployees.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={8}
+                      className="py-10 px-4 text-center text-xs text-slate-500"
+                    >
+                      Không tìm thấy nhân viên nào khớp với bộ lọc hiện tại.
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedEmployees.map((emp) => {
                   const isSelected = selectedEmployeeIds.has(emp.id);
                   const isUploadingThis = uploadingPhotoEmpId === emp.id;
                   return (
@@ -828,9 +925,116 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
                       </td>
                     </tr>
                   );
-                })}
+                })
+                )}
               </tbody>
             </table>
+
+            {/* Pagination Footer Bar */}
+            {filteredEmployees.length > 0 && (
+              <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex flex-wrap items-center gap-3 text-slate-600">
+                  <span>
+                    Hiển thị{' '}
+                    <strong className="font-mono-num text-slate-900">
+                      {(safeCurrentPage - 1) * pageSize + 1}
+                    </strong>
+                    –
+                    <strong className="font-mono-num text-slate-900">
+                      {Math.min(safeCurrentPage * pageSize, filteredEmployees.length)}
+                    </strong>{' '}
+                    trong tổng số{' '}
+                    <strong className="font-mono-num text-blue-700">
+                      {filteredEmployees.length}
+                    </strong>{' '}
+                    nhân viên
+                  </span>
+
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-500">Số dòng:</span>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setCurrentPage(1);
+                      }}
+                      className="px-2 py-1 bg-white border border-slate-300 rounded-lg text-xs font-mono-num font-semibold text-slate-700 focus:outline-none focus:border-blue-600 cursor-pointer"
+                    >
+                      <option value={10}>10 / trang</option>
+                      <option value={20}>20 / trang</option>
+                      <option value={50}>50 / trang</option>
+                      <option value={100}>100 / trang</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={safeCurrentPage <= 1}
+                    onClick={() => setCurrentPage(1)}
+                    className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
+                    title="Trang đầu"
+                  >
+                    <ChevronsLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={safeCurrentPage <= 1}
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 font-medium hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    <span>Trước</span>
+                  </button>
+
+                  {visiblePageNumbers.map((item) =>
+                    typeof item === 'number' ? (
+                      <button
+                        key={item}
+                        type="button"
+                        onClick={() => setCurrentPage(item)}
+                        className={`min-w-[30px] h-7 px-2 rounded-lg font-mono-num font-bold text-xs transition-colors cursor-pointer ${
+                          item === safeCurrentPage
+                            ? 'bg-blue-700 text-white shadow-2xs'
+                            : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        {item}
+                      </button>
+                    ) : (
+                      <span
+                        key={item}
+                        className="px-1.5 text-slate-400 font-mono-num select-none"
+                      >
+                        ...
+                      </span>
+                    )
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={safeCurrentPage >= totalPages}
+                    onClick={() =>
+                      setCurrentPage((p) => Math.min(totalPages, p + 1))
+                    }
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 font-medium hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
+                  >
+                    <span>Sau</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={safeCurrentPage >= totalPages}
+                    onClick={() => setCurrentPage(totalPages)}
+                    className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
+                    title="Trang cuối"
+                  >
+                    <ChevronsRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -886,7 +1090,7 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
                     required
                     value={joinDate}
                     onChange={(e) => setJoinDate(e.target.value)}
-                    placeholder="VD: 02/10/2026"
+                    placeholder={`VD: ${getTodayFormattedDDMMYYYY()}`}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono-num focus:outline-none focus:border-blue-600"
                   />
                 </div>
@@ -907,27 +1111,43 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Bộ phận công tác *
-                </label>
-                <input
-                  type="text"
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block font-semibold text-slate-700">
+                    Bộ phận công tác *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeptModalError(null);
+                      setNewDeptName('');
+                      setEditingDeptId(null);
+                      setIsDeptModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 hover:text-blue-800 hover:underline cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Thêm / Quản lý bộ phận
+                  </button>
+                </div>
+                <select
                   required
-                  list="department-suggestions"
                   value={department}
                   onChange={(e) => setDepartment(e.target.value)}
-                  placeholder="VD: Bảo trì vận hành"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-600"
-                />
-                <datalist id="department-suggestions">
-                  <option value="Bảo trì vận hành" />
-                  <option value="Sản xuất - Kỹ thuật" />
-                  <option value="Kế toán - Tài chính" />
-                  <option value="Hành chính - Nhân sự" />
-                  <option value="Kho vận - Logistics" />
-                  <option value="Kiểm soát chất lượng (QC)" />
-                  <option value="Kinh doanh - Xuất nhập khẩu" />
-                </datalist>
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-blue-600"
+                >
+                  <option value="" disabled>
+                    -- Chọn bộ phận công tác --
+                  </option>
+                  {department &&
+                    !departmentNames.includes(department) && (
+                      <option value={department}>{department}</option>
+                    )}
+                  {departmentNames.map((deptName) => (
+                    <option key={deptName} value={deptName}>
+                      {deptName}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="pt-2 border-t border-slate-200 flex items-center gap-4">
@@ -1190,6 +1410,227 @@ export const EmployeeManagementView: React.FC<EmployeeManagementViewProps> = ({
           });
         }}
       />
+
+      {/* Modal 7: Department Management Popup Modal */}
+      {isDeptModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="bg-white border border-slate-200 rounded-xl w-full max-w-lg overflow-hidden shadow-xl flex flex-col max-h-[85vh]">
+            <div className="px-5 py-4 bg-blue-700 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-4 h-4" />
+                <div>
+                  <h3 className="text-sm font-bold">
+                    Quản Lý Danh Sách Bộ Phận ({departments.length})
+                  </h3>
+                  <p className="text-[11px] text-blue-100">
+                    Dữ liệu bộ phận tại đây được đồng bộ cho toàn bộ mục Nhân viên và In thẻ
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsDeptModalOpen(false)}
+                className="p-1 rounded hover:bg-blue-600 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 overflow-y-auto flex-1">
+              {deptModalError && (
+                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 flex items-start gap-2 text-xs">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{deptModalError}</span>
+                </div>
+              )}
+
+              {/* Add New Department Form */}
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setDeptModalError(null);
+                  const clean = newDeptName.trim();
+                  if (!clean) {
+                    setDeptModalError('Vui lòng nhập tên bộ phận mới.');
+                    return;
+                  }
+                  setIsSavingDept(true);
+                  try {
+                    const created = await onAddDepartment(clean);
+                    setNewDeptName('');
+                    if (isFormOpen && !department) {
+                      setDepartment(created.name);
+                    }
+                  } catch (err) {
+                    setDeptModalError(
+                      err instanceof Error ? err.message : 'Lỗi khi thêm bộ phận.'
+                    );
+                  } finally {
+                    setIsSavingDept(false);
+                  }
+                }}
+                className="flex items-center gap-2"
+              >
+                <input
+                  type="text"
+                  value={newDeptName}
+                  onChange={(e) => setNewDeptName(e.target.value)}
+                  placeholder="Nhập tên bộ phận mới (VD: Hành chính nhân sự, BGĐ...)"
+                  className="flex-1 px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:border-blue-600"
+                />
+                <button
+                  type="submit"
+                  disabled={isSavingDept}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-lg disabled:opacity-50 cursor-pointer shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Thêm Bộ Phận
+                </button>
+              </form>
+
+              {/* Existing Departments List */}
+              <div className="border border-slate-200 rounded-lg divide-y divide-slate-200 max-h-80 overflow-y-auto">
+                {departments.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-slate-500">
+                    Chưa có bộ phận nào. Hãy thêm bộ phận đầu tiên ở trên.
+                  </div>
+                ) : (
+                  departments.map((dept) => {
+                    const empCount = employeeCountByDept.get(dept.name) || 0;
+                    const isEditing = editingDeptId === dept.id;
+
+                    return (
+                      <div
+                        key={dept.id}
+                        className="px-3.5 py-2.5 flex items-center justify-between gap-2 hover:bg-slate-50"
+                      >
+                        {isEditing ? (
+                          <div className="flex items-center gap-2 flex-1">
+                            <input
+                              type="text"
+                              value={editingDeptName}
+                              onChange={(e) => setEditingDeptName(e.target.value)}
+                              className="flex-1 px-2.5 py-1 text-xs border border-blue-500 rounded focus:outline-none"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              disabled={isSavingDept}
+                              onClick={async () => {
+                                setDeptModalError(null);
+                                const clean = editingDeptName.trim();
+                                if (!clean) {
+                                  setDeptModalError('Tên bộ phận không được để trống.');
+                                  return;
+                                }
+                                setIsSavingDept(true);
+                                try {
+                                  const oldName = dept.name;
+                                  await onUpdateDepartment(dept.id, clean);
+                                  if (deptFilter === oldName) {
+                                    setDeptFilter(clean);
+                                  }
+                                  if (department === oldName) {
+                                    setDepartment(clean);
+                                  }
+                                  setEditingDeptId(null);
+                                } catch (err) {
+                                  setDeptModalError(
+                                    err instanceof Error
+                                      ? err.message
+                                      : 'Lỗi khi cập nhật bộ phận.'
+                                  );
+                                } finally {
+                                  setIsSavingDept(false);
+                                }
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded cursor-pointer"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              Lưu
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingDeptId(null)}
+                              className="px-2 py-1 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded cursor-pointer"
+                            >
+                              Hủy
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-xs font-bold text-slate-800 truncate">
+                                {dept.name}
+                              </span>
+                              <span className="px-2 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-600 rounded">
+                                {empCount} NV
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDeptModalError(null);
+                                  setEditingDeptId(dept.id);
+                                  setEditingDeptName(dept.name);
+                                }}
+                                className="p-1.5 text-slate-600 hover:text-blue-700 hover:bg-blue-50 rounded cursor-pointer"
+                                title="Đổi tên bộ phận"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isSavingDept}
+                                onClick={async () => {
+                                  setDeptModalError(null);
+                                  setIsSavingDept(true);
+                                  try {
+                                    await onDeleteDepartment(dept.id);
+                                    if (deptFilter === dept.name) {
+                                      setDeptFilter('ALL');
+                                    }
+                                  } catch (err) {
+                                    setDeptModalError(
+                                      err instanceof Error
+                                        ? err.message
+                                        : 'Lỗi khi xóa bộ phận.'
+                                    );
+                                  } finally {
+                                    setIsSavingDept(false);
+                                  }
+                                }}
+                                className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded cursor-pointer"
+                                title="Xóa bộ phận khỏi danh sách"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+              <span className="text-[11px] text-slate-500">
+                Khi đổi tên bộ phận, các nhân viên thuộc bộ phận đó cũng được cập nhật theo.
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsDeptModalOpen(false)}
+                className="px-4 py-1.5 text-xs font-bold text-slate-700 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg cursor-pointer"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

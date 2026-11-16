@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Save,
   Building2,
@@ -21,6 +21,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [draft, setDraft] = useState<AppSettings>(settings);
   const [isSaving, setIsSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
+
+  useEffect(() => {
+    setDraft(settings);
+  }, [settings]);
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

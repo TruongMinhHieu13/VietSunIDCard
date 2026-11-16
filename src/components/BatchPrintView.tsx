@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
-import { AppSettings, CardTemplate, Employee } from '../types';
+import { AppSettings, CardTemplate, Department, Employee } from '../types';
 import { IdCardPreview } from './IdCardPreview';
 import { triggerBrowserCtrlP } from '../utils/nativePrint';
 import {
@@ -31,51 +31,29 @@ import {
 } from './EmployeeManagementView';
 import { FaceCropModal } from './FaceCropStudioView';
 
-const PRINT_CONFIG_STORAGE_KEY = 'vietsun_print_config_default_v2';
+const PRINT_UI_PREFS_STORAGE_KEY = 'vietsun_print_ui_prefs_v1';
 
-interface SavedPrintLayoutDefaults {
-  printMethod: 'a4_sheet' | 'cr80_printer';
-  paperSize: 'A4' | 'Letter';
-  cols: number;
-  rows: number;
-  gapMm: number;
-  marginMm: number;
-  cardWidthMm: number;
-  cardHeightMm: number;
+interface SavedPrintUiPrefs {
   showCropMarks: boolean;
   previewScale: number;
 }
 
-function loadSavedPrintDefaults(): SavedPrintLayoutDefaults {
+function loadSavedPrintUiPrefs(): SavedPrintUiPrefs {
   try {
-    const raw = localStorage.getItem(PRINT_CONFIG_STORAGE_KEY);
+    const raw = localStorage.getItem(PRINT_UI_PREFS_STORAGE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as Partial<SavedPrintLayoutDefaults>;
+      const parsed = JSON.parse(raw) as Partial<SavedPrintUiPrefs>;
       return {
-        printMethod: parsed.printMethod === 'cr80_printer' ? 'cr80_printer' : 'a4_sheet',
-        paperSize: parsed.paperSize === 'Letter' ? 'Letter' : 'A4',
-        cols: typeof parsed.cols === 'number' ? parsed.cols : 2,
-        rows: typeof parsed.rows === 'number' ? parsed.rows : 4,
-        gapMm: typeof parsed.gapMm === 'number' ? parsed.gapMm : 0,
-        marginMm: typeof parsed.marginMm === 'number' ? parsed.marginMm : 10,
-        cardWidthMm: typeof parsed.cardWidthMm === 'number' ? parsed.cardWidthMm : 100,
-        cardHeightMm: typeof parsed.cardHeightMm === 'number' ? parsed.cardHeightMm : 50,
-        showCropMarks: typeof parsed.showCropMarks === 'boolean' ? parsed.showCropMarks : false,
-        previewScale: typeof parsed.previewScale === 'number' ? parsed.previewScale : 0.78,
+        showCropMarks:
+          typeof parsed.showCropMarks === 'boolean' ? parsed.showCropMarks : false,
+        previewScale:
+          typeof parsed.previewScale === 'number' ? parsed.previewScale : 0.78,
       };
     }
   } catch {
     // ignore storage read error
   }
   return {
-    printMethod: 'a4_sheet',
-    paperSize: 'A4',
-    cols: 2,
-    rows: 4,
-    gapMm: 0,
-    marginMm: 10,
-    cardWidthMm: 100,
-    cardHeightMm: 50,
     showCropMarks: false,
     previewScale: 0.78,
   };
@@ -83,6 +61,7 @@ function loadSavedPrintDefaults(): SavedPrintLayoutDefaults {
 
 interface BatchPrintViewProps {
   employees: Employee[];
+  departments: Department[];
   templates: CardTemplate[];
   selectedTemplate: CardTemplate;
   onSelectTemplate: (template: CardTemplate) => void;
@@ -116,6 +95,7 @@ interface PrintPageDescriptor {
 
 export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
   employees,
+  departments,
   templates,
   selectedTemplate,
   onSelectTemplate,
@@ -136,12 +116,14 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
   const [joinDateFrom, setJoinDateFrom] = useState('');
   const [joinDateTo, setJoinDateTo] = useState('');
   const [customSelectCount, setCustomSelectCount] = useState<string>('');
+  const [visibleEmployeeLimit, setVisibleEmployeeLimit] = useState<number>(100);
+  const [visiblePageLimit, setVisiblePageLimit] = useState<number>(5);
 
   // Quick Add Employee state right on the Print Page
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [quickMsnv, setQuickMsnv] = useState('');
   const [quickFullName, setQuickFullName] = useState('');
-  const [quickDept, setQuickDept] = useState('Bảo trì vận hành');
+  const [quickDept, setQuickDept] = useState(() => departments[0]?.name || '');
   const [quickJoinDate, setQuickJoinDate] = useState(() => {
     const now = new Date();
     const dd = String(now.getDate()).padStart(2, '0');
@@ -153,31 +135,69 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
   const [quickAddError, setQuickAddError] = useState<string | null>(null);
   const [isQuickAdding, setIsQuickAdding] = useState(false);
 
-  const initialDefaults = useMemo(() => loadSavedPrintDefaults(), []);
+  const initialUiPrefs = useMemo(() => loadSavedPrintUiPrefs(), []);
 
-  // Print Layout Settings (Initialized from saved defaults)
+  // Print Layout Settings (Initialized directly from Mục Cài đặt `settings`)
   const [printMethod, setPrintMethod] = useState<'a4_sheet' | 'cr80_printer'>(
-    initialDefaults.printMethod
+    settings.defaultPaperSize === 'CR80' ? 'cr80_printer' : 'a4_sheet'
   );
   const [paperSize, setPaperSize] = useState<'A4' | 'Letter'>(
-    initialDefaults.paperSize
+    settings.defaultPaperSize === 'Letter' ? 'Letter' : 'A4'
   );
-  const [cols, setCols] = useState<number>(initialDefaults.cols);
-  const [rows, setRows] = useState<number>(initialDefaults.rows);
-  const [gapMm, setGapMm] = useState<number>(initialDefaults.gapMm);
-  const [marginMm, setMarginMm] = useState<number>(initialDefaults.marginMm);
+  const [cols, setCols] = useState<number>(settings.defaultCols || 2);
+  const [rows, setRows] = useState<number>(settings.defaultRows || 4);
+  const [gapMm, setGapMm] = useState<number>(
+    typeof settings.defaultGapMm === 'number' ? settings.defaultGapMm : 4
+  );
+  const [marginMm, setMarginMm] = useState<number>(
+    typeof settings.defaultMarginMm === 'number' ? settings.defaultMarginMm : 10
+  );
   const [cardWidthMm, setCardWidthMm] = useState<number>(
-    initialDefaults.cardWidthMm
+    settings.cardWidthMm || 85.6
   );
   const [cardHeightMm, setCardHeightMm] = useState<number>(
-    initialDefaults.cardHeightMm
+    settings.cardHeightMm || 54
   );
   const [showCropMarks, setShowCropMarks] = useState<boolean>(
-    initialDefaults.showCropMarks
+    initialUiPrefs.showCropMarks
   );
   const [previewScale, setPreviewScale] = useState<number>(
-    initialDefaults.previewScale
+    initialUiPrefs.previewScale
   );
+
+  // Sync cardWidthMm, cardHeightMm, and default page parameters whenever `settings` (from Mục Cài đặt) updates
+  useEffect(() => {
+    setPrintMethod(
+      settings.defaultPaperSize === 'CR80' ? 'cr80_printer' : 'a4_sheet'
+    );
+    setPaperSize(settings.defaultPaperSize === 'Letter' ? 'Letter' : 'A4');
+    if (typeof settings.defaultCols === 'number' && settings.defaultCols > 0) {
+      setCols(settings.defaultCols);
+    }
+    if (typeof settings.defaultRows === 'number' && settings.defaultRows > 0) {
+      setRows(settings.defaultRows);
+    }
+    if (typeof settings.defaultGapMm === 'number') {
+      setGapMm(settings.defaultGapMm);
+    }
+    if (typeof settings.defaultMarginMm === 'number') {
+      setMarginMm(settings.defaultMarginMm);
+    }
+    if (typeof settings.cardWidthMm === 'number' && settings.cardWidthMm > 0) {
+      setCardWidthMm(settings.cardWidthMm);
+    }
+    if (typeof settings.cardHeightMm === 'number' && settings.cardHeightMm > 0) {
+      setCardHeightMm(settings.cardHeightMm);
+    }
+  }, [
+    settings.defaultPaperSize,
+    settings.defaultCols,
+    settings.defaultRows,
+    settings.defaultGapMm,
+    settings.defaultMarginMm,
+    settings.cardWidthMm,
+    settings.cardHeightMm,
+  ]);
 
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isSavingDefault, setIsSavingDefault] = useState(false);
@@ -193,55 +213,22 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
 
   const sheetRefs = useRef<Array<HTMLDivElement | null>>([]);
 
-  // Auto-persist print layout configuration to localStorage whenever any value changes
+  // Persist UI-only preferences (crop marks & zoom scale)
   useEffect(() => {
     try {
-      const payload: SavedPrintLayoutDefaults = {
-        printMethod,
-        paperSize,
-        cols,
-        rows,
-        gapMm,
-        marginMm,
-        cardWidthMm,
-        cardHeightMm,
+      const payload: SavedPrintUiPrefs = {
         showCropMarks,
         previewScale,
       };
-      localStorage.setItem(PRINT_CONFIG_STORAGE_KEY, JSON.stringify(payload));
+      localStorage.setItem(PRINT_UI_PREFS_STORAGE_KEY, JSON.stringify(payload));
     } catch {
       // ignore storage write error
     }
-  }, [
-    printMethod,
-    paperSize,
-    cols,
-    rows,
-    gapMm,
-    marginMm,
-    cardWidthMm,
-    cardHeightMm,
-    showCropMarks,
-    previewScale,
-  ]);
+  }, [showCropMarks, previewScale]);
 
   const handleSaveAsDefaultConfig = async () => {
     setIsSavingDefault(true);
     try {
-      const payload: SavedPrintLayoutDefaults = {
-        printMethod,
-        paperSize,
-        cols,
-        rows,
-        gapMm,
-        marginMm,
-        cardWidthMm,
-        cardHeightMm,
-        showCropMarks,
-        previewScale,
-      };
-      localStorage.setItem(PRINT_CONFIG_STORAGE_KEY, JSON.stringify(payload));
-
       await onSaveSettings({
         ...settings,
         defaultPaperSize: printMethod === 'cr80_printer' ? 'CR80' : paperSize,
@@ -260,13 +247,15 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
     }
   };
 
-  const departments = useMemo(() => {
-    const set = new Set<string>();
-    employees.forEach((e) => {
-      if (e.department) set.add(e.department);
-    });
-    return Array.from(set).sort();
-  }, [employees]);
+  const departmentNames = useMemo(() => {
+    return departments.map((d) => d.name);
+  }, [departments]);
+
+  useEffect(() => {
+    if (!quickDept && departmentNames.length > 0) {
+      setQuickDept(departmentNames[0]);
+    }
+  }, [departmentNames, quickDept]);
 
   const filteredEmployees = useMemo(() => {
     const fromTs = parseDateToUtcTimestamp(joinDateFrom);
@@ -300,6 +289,25 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
     });
   }, [employees, searchQuery, deptFilter, printStatusFilter, joinDateFrom, joinDateTo]);
 
+  // Reset lazy render limit to 100 whenever filters change so filtered results appear immediately
+  useEffect(() => {
+    setVisibleEmployeeLimit(100);
+  }, [searchQuery, deptFilter, printStatusFilter, joinDateFrom, joinDateTo]);
+
+  const visibleEmployees = useMemo(() => {
+    return filteredEmployees.slice(0, visibleEmployeeLimit);
+  }, [filteredEmployees, visibleEmployeeLimit]);
+
+  const handleEmployeeListScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (visibleEmployeeLimit >= filteredEmployees.length) return;
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 140) {
+      setVisibleEmployeeLimit((prev) =>
+        Math.min(filteredEmployees.length, prev + 100)
+      );
+    }
+  };
+
   const selectedEmployeesList = useMemo(() => {
     return employees.filter((emp) => selectedEmployeeIds.has(emp.id));
   }, [employees, selectedEmployeeIds]);
@@ -322,6 +330,23 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
 
     return result;
   }, [selectedEmployeesList, printMethod, cols, rows]);
+
+  useEffect(() => {
+    setVisiblePageLimit(5);
+  }, [selectedEmployeeIds.size, printMethod, cols, rows]);
+
+  const visiblePages = useMemo(() => {
+    if (isExportingPdf) return pages;
+    return pages.slice(0, visiblePageLimit);
+  }, [pages, visiblePageLimit, isExportingPdf]);
+
+  const handlePreviewScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (visiblePageLimit >= pages.length) return;
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 240) {
+      setVisiblePageLimit((prev) => Math.min(pages.length, prev + 5));
+    }
+  };
 
   // Selection helpers
   const toggleEmployee = (id: string) => {
@@ -494,6 +519,8 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
       const sheetHeightMm =
         printMethod === 'cr80_printer' ? hMm : paperSize === 'A4' ? 297 : 279.4;
 
+      await new Promise((resolve) => setTimeout(resolve, 120));
+
       const pdf = new jsPDF({
         orientation: sheetWidthMm > sheetHeightMm ? 'landscape' : 'portrait',
         unit: 'mm',
@@ -592,15 +619,6 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setIsQuickAddOpen((prev) => !prev)}
-            className="inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 cursor-pointer transition-colors"
-          >
-            <UserPlus className="w-4 h-4" />
-            {isQuickAddOpen ? 'Đóng Thêm Nhanh' : '+ Thêm Nhanh Nhân Viên'}
-          </button>
-
           <button
             type="button"
             disabled={selectedEmployeesList.length === 0 || isExportingPdf}
@@ -780,25 +798,20 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
                       <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
                         Bộ phận công tác *
                       </label>
-                      <input
-                        type="text"
-                        list="quick-dept-suggestions"
+                      <select
                         value={quickDept}
                         onChange={(e) => setQuickDept(e.target.value)}
-                        placeholder="VD: Bảo trì vận hành"
-                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-600"
-                      />
-                      <datalist id="quick-dept-suggestions">
-                        {departments.map((d) => (
-                          <option key={d} value={d} />
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-blue-600"
+                      >
+                        <option value="" disabled>
+                          -- Chọn bộ phận công tác --
+                        </option>
+                        {departmentNames.map((d) => (
+                          <option key={d} value={d}>
+                            {d}
+                          </option>
                         ))}
-                        <option value="Bảo trì vận hành" />
-                        <option value="Sản xuất - Kỹ thuật" />
-                        <option value="Kế toán - Tài chính" />
-                        <option value="Hành chính - Nhân sự" />
-                        <option value="Kho vận - Logistics" />
-                        <option value="Kiểm soát chất lượng (QC)" />
-                      </datalist>
+                      </select>
                     </div>
                   </div>
                 </div>
@@ -845,9 +858,9 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
                 className="px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg"
               >
                 <option value="ALL">
-                  Tất cả bộ phận ({employees.length})
+                  Tất cả bộ phận ({departmentNames.length})
                 </option>
-                {departments.map((d) => (
+                {departmentNames.map((d) => (
                   <option key={d} value={d}>
                     {d}
                   </option>
@@ -988,135 +1001,158 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
             </div>
           </div>
 
-          {/* Employee Checklist Table */}
-          <div className="max-h-[460px] overflow-y-auto divide-y divide-slate-200">
+          {/* Employee Checklist Table (Lazy loaded 100 items per scroll batch) */}
+          <div
+            onScroll={handleEmployeeListScroll}
+            className="max-h-[460px] overflow-y-auto divide-y divide-slate-200"
+          >
             {filteredEmployees.length === 0 ? (
               <div className="p-8 text-center text-xs text-slate-500">
                 Không tìm thấy nhân viên phù hợp với bộ lọc.
               </div>
             ) : (
-              filteredEmployees.map((emp) => {
-                const isSelected = selectedEmployeeIds.has(emp.id);
-                const isUploadingThis = uploadingPhotoEmpId === emp.id;
-                return (
-                  <div
-                    key={emp.id}
-                    onClick={() => toggleEmployee(emp.id)}
-                    className={`px-4 py-2.5 flex items-center justify-between gap-2 cursor-pointer transition-colors text-xs ${
-                      isSelected
-                        ? 'bg-blue-50/70 hover:bg-blue-50'
-                        : 'hover:bg-slate-50'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <button
-                        type="button"
-                        className="text-blue-600 shrink-0"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleEmployee(emp.id);
-                        }}
-                      >
-                        {isSelected ? (
-                          <CheckSquare className="w-4 h-4" />
-                        ) : (
-                          <Square className="w-4 h-4 text-slate-400" />
-                        )}
-                      </button>
-
-                      {/* Clickable 3x4 Photo Thumbnail */}
-                      <div
-                        className="relative shrink-0 group"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <label
-                          className="w-8 h-10 rounded border border-slate-300 bg-white overflow-hidden flex flex-col items-center justify-center cursor-pointer hover:border-blue-600 transition-colors"
-                          title={`Bấm để chọn hoặc đổi hình 3×4 cho ${emp.fullName}`}
+              <>
+                {visibleEmployees.map((emp) => {
+                  const isSelected = selectedEmployeeIds.has(emp.id);
+                  const isUploadingThis = uploadingPhotoEmpId === emp.id;
+                  return (
+                    <div
+                      key={emp.id}
+                      onClick={() => toggleEmployee(emp.id)}
+                      className={`px-4 py-2.5 flex items-center justify-between gap-2 cursor-pointer transition-colors text-xs ${
+                        isSelected
+                          ? 'bg-blue-50/70 hover:bg-blue-50'
+                          : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <button
+                          type="button"
+                          className="text-blue-600 shrink-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleEmployee(emp.id);
+                          }}
                         >
-                          {isUploadingThis ? (
-                            <span className="text-[8px] font-bold text-blue-600">
-                              ...
-                            </span>
-                          ) : emp.photoUrl ? (
-                            <img
-                              src={emp.photoUrl}
-                              alt={emp.fullName}
-                              referrerPolicy="no-referrer"
-                              className="w-full h-full object-cover"
-                            />
+                          {isSelected ? (
+                            <CheckSquare className="w-4 h-4" />
                           ) : (
-                            <div className="flex flex-col items-center justify-center text-blue-600">
-                              <Camera className="w-3 h-3" />
-                              <span className="text-[8px] font-bold leading-none mt-0.5">
-                                3×4
-                              </span>
-                            </div>
+                            <Square className="w-4 h-4 text-slate-400" />
                           )}
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={async (e) => {
-                              const file = e.target.files?.[0];
-                              if (!file) return;
-                              setUploadingPhotoEmpId(emp.id);
-                              try {
-                                const compressed =
-                                  await compressImageTo3x4DataUrl(file);
-                                await onUpdateEmployeePhoto(emp, compressed);
-                              } finally {
-                                setUploadingPhotoEmpId(null);
-                                e.target.value = '';
-                              }
-                            }}
-                            className="hidden"
-                          />
-                        </label>
+                        </button>
+
+                        {/* Clickable 3x4 Photo Thumbnail */}
+                        <div
+                          className="relative shrink-0 group"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <label
+                            className="w-8 h-10 rounded border border-slate-300 bg-white overflow-hidden flex flex-col items-center justify-center cursor-pointer hover:border-blue-600 transition-colors"
+                            title={`Bấm để chọn hoặc đổi hình 3×4 cho ${emp.fullName}`}
+                          >
+                            {isUploadingThis ? (
+                              <span className="text-[8px] font-bold text-blue-600">
+                                ...
+                              </span>
+                            ) : emp.photoUrl ? (
+                              <img
+                                src={emp.photoUrl}
+                                alt={emp.fullName}
+                                loading="lazy"
+                                decoding="async"
+                                referrerPolicy="no-referrer"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="flex flex-col items-center justify-center text-blue-600">
+                                <Camera className="w-3 h-3" />
+                                <span className="text-[8px] font-bold leading-none mt-0.5">
+                                  3×4
+                                </span>
+                              </div>
+                            )}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                setUploadingPhotoEmpId(emp.id);
+                                try {
+                                  const compressed =
+                                    await compressImageTo3x4DataUrl(file);
+                                  await onUpdateEmployeePhoto(emp, compressed);
+                                } finally {
+                                  setUploadingPhotoEmpId(null);
+                                  e.target.value = '';
+                                }
+                              }}
+                              className="hidden"
+                            />
+                          </label>
+                        </div>
+
+                        <div className="min-w-0">
+                          <div className="font-bold text-slate-900 truncate">
+                            {emp.fullName}
+                          </div>
+                          <div className="text-[11px] text-slate-500 truncate">
+                            MSNV:{' '}
+                            <strong className="font-mono-num text-slate-700">
+                              {emp.msnv}
+                            </strong>{' '}
+                            · {emp.department}
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="min-w-0">
-                        <div className="font-bold text-slate-900 truncate">
-                          {emp.fullName}
-                        </div>
-                        <div className="text-[11px] text-slate-500 truncate">
-                          MSNV:{' '}
-                          <strong className="font-mono-num text-slate-700">
-                            {emp.msnv}
-                          </strong>{' '}
-                          · {emp.department}
-                        </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setFaceCropEmployee(emp);
+                            setIsFaceCropModalOpen(true);
+                          }}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-blue-700 bg-white border border-blue-200 hover:bg-blue-50 rounded cursor-pointer"
+                          title={`Mở công cụ AI cắt ảnh 3×4 cho ${emp.fullName}`}
+                        >
+                          <ScanFace className="w-3 h-3" />
+                          <span>Cắt 3×4 AI</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePrintSingleEmployee(emp);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-white bg-blue-700 hover:bg-blue-800 rounded cursor-pointer"
+                          title="In ngay thẻ của nhân viên này"
+                        >
+                          <Printer className="w-3 h-3" />
+                          In
+                        </button>
                       </div>
                     </div>
+                  );
+                })}
 
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setFaceCropEmployee(emp);
-                          setIsFaceCropModalOpen(true);
-                        }}
-                        className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-blue-700 bg-white border border-blue-200 hover:bg-blue-50 rounded cursor-pointer"
-                        title={`Mở công cụ AI cắt ảnh 3×4 cho ${emp.fullName}`}
-                      >
-                        <ScanFace className="w-3 h-3" />
-                        <span>Cắt 3×4 AI</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handlePrintSingleEmployee(emp);
-                        }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-white bg-blue-700 hover:bg-blue-800 rounded cursor-pointer"
-                        title="In ngay thẻ của nhân viên này"
-                      >
-                        <Printer className="w-3 h-3" />
-                        In
-                      </button>
-                    </div>
+                {visibleEmployeeLimit < filteredEmployees.length && (
+                  <div className="p-3 bg-slate-50 text-center">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setVisibleEmployeeLimit((prev) =>
+                          Math.min(filteredEmployees.length, prev + 100)
+                        )
+                      }
+                      className="px-3.5 py-1.5 text-xs font-semibold text-blue-700 bg-white border border-blue-200 hover:bg-blue-50 rounded-lg cursor-pointer transition-colors"
+                    >
+                      Đang hiển thị {visibleEmployees.length} / {filteredEmployees.length} nhân viên — Cuộn xuống hoặc bấm để tải thêm 100 người
+                    </button>
                   </div>
-                );
-              })
+                )}
+              </>
             )}
           </div>
 
@@ -1404,7 +1440,10 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
           </div>
 
           {/* Multi-Page Preview Container (Bảng In) with built-in Print & PDF buttons */}
-          <div className="bg-slate-200/80 border border-slate-300 rounded-xl p-5 space-y-5 max-h-[780px] overflow-auto">
+          <div
+            onScroll={handlePreviewScroll}
+            className="bg-slate-200/80 border border-slate-300 rounded-xl p-5 space-y-5 max-h-[780px] overflow-auto"
+          >
             {/* Top Bar inside Bảng In */}
             <div className="bg-white p-3.5 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
@@ -1457,7 +1496,7 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
               </div>
             ) : (
               <div className="flex flex-col items-center gap-8">
-                {pages.map((page, pageIdx) => (
+                {visiblePages.map((page, pageIdx) => (
                   <div
                     key={page.pageNumber}
                     className="flex flex-col items-center w-full"
@@ -1539,6 +1578,20 @@ export const BatchPrintView: React.FC<BatchPrintViewProps> = ({
                     </div>
                   </div>
                 ))}
+
+                {visiblePages.length < pages.length && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setVisiblePageLimit((prev) =>
+                        Math.min(pages.length, prev + 5)
+                      )
+                    }
+                    className="px-4 py-2 text-xs font-bold text-blue-700 bg-white border border-blue-200 hover:bg-blue-50 rounded-lg shadow-xs cursor-pointer transition-colors"
+                  >
+                    Đang hiển thị {visiblePages.length} / {pages.length} trang xem trước — Cuộn xuống hoặc bấm để xem thêm 5 trang
+                  </button>
+                )}
               </div>
             )}
           </div>

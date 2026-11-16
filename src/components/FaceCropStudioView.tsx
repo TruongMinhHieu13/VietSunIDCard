@@ -23,20 +23,28 @@ import {
   Eye,
   Crop,
   AlertTriangle,
+  Loader2,
 } from 'lucide-react';
 import { CardTemplate, Employee } from '../types';
 import {
   AutoCropMethod,
+  BackdropMode,
   CropTransformConfig,
   DetectedFaceBox,
   OUTPUT_3X4_HEIGHT_PX,
   OUTPUT_3X4_WIDTH_PX,
   QuadCorners,
+  STANDARD_ID_BLUE_HEX,
   computeIdCropConfigFromFace,
+  computePortraitAlphaMatteForConfig,
   detectFacesInImage,
+  formatCauHinhTxt,
+  isBackdropReplacementActive,
+  loadDefaultCauHinh,
   loadImageFromFile,
   matchEmployeeByPhotoFileName,
-  renderCroppedIdPhotoToDataUrl,
+  renderCroppedIdPhotoVariants,
+  saveDefaultCauHinh,
   timKhungTheoMep,
   timKhungTheoPhong,
   tryMethodB_TableColorBlockDeskew,
@@ -79,6 +87,8 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
 
   // AI Face Detection & Pipeline state
   const [isDetecting, setIsDetecting] = useState<boolean>(false);
+  const [isSegmentingBg, setIsSegmentingBg] = useState<boolean>(false);
+  const [activeTaskLabel, setActiveTaskLabel] = useState<string>('');
   const [detectedFaces, setDetectedFaces] = useState<DetectedFaceBox[]>([]);
   const [detectedCardRect, setDetectedCardRect] = useState<{
     x: number;
@@ -94,6 +104,8 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
   const [aspectMode, setAspectMode] = useState<'3x4' | '25x35'>('3x4');
   const currentAspectRatio = aspectMode === '3x4' ? 3 / 4 : 25 / 35;
 
+  const initialCauHinh = useMemo(() => loadDefaultCauHinh(), []);
+
   const [cropConfig, setCropConfig] = useState<CropTransformConfig>({
     centerX: 250,
     centerY: 250,
@@ -103,7 +115,12 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
     flipH: false,
     brightness: 100,
     contrast: 100,
-    sharpen: true,
+    sharpen: initialCauHinh.muc > 0,
+    enhanceLevel: initialCauHinh.muc,
+    removeRedStamp: !initialCauHinh.giuDau,
+    backdropMode: initialCauHinh.phong,
+    customBackdropHex: initialCauHinh.customHex,
+    forceBackdrop: initialCauHinh.epPhong,
     aspectRatio: 3 / 4,
     methodUsed: 'A',
     needsReview: false,
@@ -112,8 +129,13 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
   // Interaction mode on canvas: 'move' (drag box / drag corners) or 'draw' (click & drag to draw a new 3x4 crop box)
   const [interactionMode, setInteractionMode] = useState<'move' | 'draw'>('move');
 
-  // Live cropped DataURL (354 x 472 px @ 300 DPI)
+  // Live cropped DataURL (354 x 472 px @ 300 DPI) + dual variants when --phong = ca-hai
   const [croppedDataUrl, setCroppedDataUrl] = useState<string>('');
+  const [whiteVariantUrl, setWhiteVariantUrl] = useState<string>('');
+  const [blueVariantUrl, setBlueVariantUrl] = useState<string>('');
+  const [preferredCaHaiCardVariant, setPreferredCaHaiCardVariant] = useState<
+    'white' | 'blue'
+  >('blue');
   const [showBiometricGuides, setShowBiometricGuides] = useState<boolean>(true);
   const [showKeypointsOverlay, setShowKeypointsOverlay] = useState<boolean>(true);
 
@@ -185,10 +207,15 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
     [employees]
   );
 
-  // Execute the A -> B -> C pipeline on `img`
+  // Execute the A -> B -> A2 -> C pipeline + AI background removal on `img`
   const runFaceDetectionOnImage = useCallback(
     async (img: HTMLImageElement, ratio: number, photoId?: string) => {
       setIsDetecting(true);
+      setActiveTaskLabel(
+        'Đang thực thi: Dò tìm khuôn mặt (A→B→A2→C), nắn thẳng & tách xóa phông nền AI...'
+      );
+      // Yield 1 frame so React paints the loading spinner immediately before WASM/Canvas work
+      await new Promise((resolve) => setTimeout(resolve, 40));
       try {
         const {
           faces,
@@ -225,30 +252,36 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
           recommendedConfig.detectedStamps.length > 0
             ? ` · Đã xóa ${recommendedConfig.detectedStamps.length} dấu đỏ đè lên ảnh`
             : '';
+        const bgNote = isBackdropReplacementActive(nextConfig)
+          ? ` · Đã xóa phông nền AI (--phong: ${nextConfig.backdropMode || 'giu'})`
+          : ' · Giữ nền cũ (Mặc định)';
 
         if (recommendedConfig.methodUsed === 'A') {
           setStatusMessage({
             type: recommendedConfig.needsReview ? 'warning' : 'success',
-            text: `Thành công [Cách A - Lần phông nền quanh đầu]: Lấy mép trên & 2 mép bên → Nắn thẳng (${recommendedConfig.rotationDeg}°) → Cắt 3:4 từ mép trên (354×472 px @ 300 DPI)${stampNote}.`,
+            text: `Thành công [Cách A - Lần phông nền có màu quanh đầu]: Lấy mép trên & 2 mép bên → Nắn thẳng (${recommendedConfig.rotationDeg}°) → Cắt 3:4 (354×472 px @ 300 DPI)${bgNote}${stampNote}.`,
           });
         } else if (recommendedConfig.methodUsed === 'B') {
           setStatusMessage({
             type: recommendedConfig.needsReview ? 'warning' : 'info',
-            text: `Thành công [Cách B - Mép tờ giấy ảnh trên nền trơn]: Nắn thẳng (${recommendedConfig.rotationDeg}°), xoay đúng chiều & bỏ viền giấy → Cắt 3:4 (354×472 px @ 300 DPI)${stampNote}.`,
+            text: `Thành công [Cách B - Mép tờ giấy ảnh trên nền trơn]: Nắn thẳng (${recommendedConfig.rotationDeg}°), xoay đúng chiều & bỏ viền giấy → Cắt 3:4 (354×472 px @ 300 DPI)${bgNote}${stampNote}.`,
           });
         } else if (recommendedConfig.methodUsed === 'A2') {
           setStatusMessage({
             type: 'success',
-            text: `Thành công [Cách A2 - 3 đường thẳng quanh mặt]: Tìm mép trái, phải, trên cho ảnh phông trắng dán trên hồ sơ → Nắn thẳng (${recommendedConfig.rotationDeg}°)${stampNote}.`,
+            text: `Thành công [Cách A2 - 3 đường thẳng quanh mặt]: Tìm mép trái, phải, trên cho ảnh phông trắng dán trên hồ sơ → Nắn thẳng (${recommendedConfig.rotationDeg}°)${bgNote}${stampNote}.`,
           });
         } else {
           setStatusMessage({
-            type: 'warning',
-            text: `Đánh dấu [XEM - Cách C]: Cắt khung 3:4 quanh khuôn mặt, không nắn thẳng${stampNote}. Vui lòng kiểm tra lại khung cắt hoặc kéo 4 góc xanh nếu cần.`,
+            type: 'success',
+            text: isBackdropReplacementActive(nextConfig)
+              ? `Thành công [Cách C - Khung 3:4 chuẩn tâm mắt quanh khuôn mặt]: Tự động xóa phông nền AI & đặt phông theo --phong (${nextConfig.backdropMode || 'giu'})${stampNote}.`
+              : `Thành công [Cách C - Khung 3:4 chuẩn tâm mắt quanh khuôn mặt]: Đã giữ nền cũ mặc định (bấm chọn Phông Trắng / Phông Xanh / Cả hai ở mục --phong nếu muốn xóa phông AI)${stampNote}.`,
           });
         }
       } finally {
         setIsDetecting(false);
+        setActiveTaskLabel('');
       }
     },
     []
@@ -261,6 +294,8 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
       setDetectedFaces([]);
       setDetectedCardRect(null);
       setCroppedDataUrl('');
+      setWhiteVariantUrl('');
+      setBlueVariantUrl('');
       return;
     }
 
@@ -288,19 +323,119 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
     };
   }, [activePhotoItem?.id, initialTargetEmployee, runFaceDetectionOnImage]);
 
-  // Re-render live cropped preview at exact 354 x 472 px (3x4 cm @ 300 DPI) + mild sharpening
+  // Recompute normalized face coordinates [x, y, w, h] inside the current crop box whenever the user drags/resizes/zooms
+  const computeNormalizedFaceForCrop = useCallback(
+    (
+      centerX: number,
+      centerY: number,
+      baseCropHeight: number,
+      scale: number,
+      aspectRatio: number
+    ): [number, number, number, number] | undefined => {
+      const face = detectedFaces[selectedFaceIndex];
+      if (!face) return undefined;
+      const effectiveH = Math.max(10, baseCropHeight / Math.max(0.08, scale));
+      const effectiveW = Math.max(10, effectiveH * aspectRatio);
+      const cropX1 = centerX - effectiveW / 2;
+      const cropY1 = centerY - effectiveH / 2;
+      return [
+        (face.x - cropX1) / effectiveW,
+        (face.y - cropY1) / effectiveH,
+        face.width / effectiveW,
+        face.height / effectiveH,
+      ];
+    },
+    [detectedFaces, selectedFaceIndex]
+  );
+
+  // Compute portrait alpha matte asynchronously when backdrop replacement is active and user is not mid-drag
+  useEffect(() => {
+    if (!loadedImage || activeDragType !== 'none') return;
+    const needsMatte = isBackdropReplacementActive(cropConfig);
+    if (!needsMatte || cropConfig.personAlphaMatte) return;
+
+    let cancelled = false;
+
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      setIsSegmentingBg(true);
+      setActiveTaskLabel(
+        'Đang thực thi: Tách người khỏi nền (xóa phông AI) & tạo phông chuẩn 300 DPI...'
+      );
+      computePortraitAlphaMatteForConfig(
+        loadedImage,
+        cropConfig,
+        OUTPUT_3X4_WIDTH_PX
+      )
+        .then((matte) => {
+          if (!cancelled && matte) {
+            setCropConfig((prev) => ({
+              ...prev,
+              personAlphaMatte: matte,
+            }));
+          }
+        })
+        .catch(() => {
+          // Fallback already handled inside computePortraitAlphaMatteForConfig
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setIsSegmentingBg(false);
+            setActiveTaskLabel('');
+          }
+        });
+    }, 120);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      setIsSegmentingBg(false);
+    };
+  }, [
+    loadedImage,
+    activeDragType,
+    cropConfig.methodUsed,
+    cropConfig.backdropMode,
+    cropConfig.forceBackdrop,
+    cropConfig.centerX,
+    cropConfig.centerY,
+    cropConfig.baseCropHeight,
+    cropConfig.scale,
+    cropConfig.rotationDeg,
+    cropConfig.flipH,
+    cropConfig.personAlphaMatte,
+  ]);
+
+  // Re-render live cropped preview at exact 354 x 472 px (3x4 cm @ 300 DPI) + variants when --phong = ca-hai
   useEffect(() => {
     if (!loadedImage) {
       setCroppedDataUrl('');
+      setWhiteVariantUrl('');
+      setBlueVariantUrl('');
       return;
     }
-    const url = renderCroppedIdPhotoToDataUrl(
+    const variants = renderCroppedIdPhotoVariants(
       loadedImage,
       cropConfig,
       OUTPUT_3X4_WIDTH_PX
     );
-    setCroppedDataUrl(url);
-  }, [loadedImage, cropConfig]);
+    setWhiteVariantUrl(variants.whiteDataUrl || '');
+    setBlueVariantUrl(variants.blueDataUrl || '');
+    if (
+      variants.whiteDataUrl &&
+      variants.blueDataUrl &&
+      cropConfig.backdropMode === 'ca-hai' &&
+      isBackdropReplacementActive(cropConfig)
+    ) {
+      setCroppedDataUrl(
+        preferredCaHaiCardVariant === 'white'
+          ? variants.whiteDataUrl
+          : variants.blueDataUrl
+      );
+    } else {
+      setCroppedDataUrl(variants.primaryDataUrl);
+    }
+  }, [loadedImage, cropConfig, preferredCaHaiCardVariant]);
 
   // Update aspect ratio while preserving center & zoom
   const handleSelectAspectMode = (mode: '3x4' | '25x35') => {
@@ -351,17 +486,28 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
       const angleDeg = Number(
         ((-Math.atan2(tr[1] - tl[1], tr[0] - tl[0]) * 180) / Math.PI).toFixed(1)
       );
+      const nextH = Math.max(20, height);
+      const nextRatio =
+        width > 0 && height > 0 ? currentAspectRatio : cropConfig.aspectRatio;
       setCropConfig((prev) => ({
         ...prev,
         centerX: cx,
         centerY: cy,
-        baseCropHeight: Math.max(20, height),
+        baseCropHeight: nextH,
         scale: 1,
         rotationDeg: angleDeg,
         methodUsed: m,
         needsReview: needsRev,
         quadCorners: corners,
-        aspectRatio: width > 0 && height > 0 ? currentAspectRatio : prev.aspectRatio,
+        personAlphaMatte: undefined,
+        normalizedFaceInCard: computeNormalizedFaceForCrop(
+          cx,
+          cy,
+          nextH,
+          1,
+          nextRatio
+        ),
+        aspectRatio: nextRatio,
       }));
     };
 
@@ -394,12 +540,20 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
           methodUsed: 'B',
           needsReview: false,
           quadCorners: blockB.corners,
+          personAlphaMatte: undefined,
+          normalizedFaceInCard: computeNormalizedFaceForCrop(
+            blockB.centerX,
+            blockB.centerY,
+            blockB.height,
+            1,
+            prev.aspectRatio
+          ),
         }));
         return;
       }
     }
 
-    // Method C: Crop 3:4 around face without rotation (marked "XEM")
+    // Method C: Crop 3:4 around face without rotation
     const cfgC = computeIdCropConfigFromFace(
       loadedImage.naturalWidth,
       loadedImage.naturalHeight,
@@ -411,6 +565,10 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
       ...cfgC,
       enhanceLevel: prev.enhanceLevel ?? 2,
       removeRedStamp: prev.removeRedStamp ?? true,
+      backdropMode: prev.backdropMode ?? 'giu',
+      customBackdropHex: prev.customBackdropHex ?? STANDARD_ID_BLUE_HEX,
+      forceBackdrop: prev.forceBackdrop ?? false,
+      personAlphaMatte: undefined,
       rotationDeg: 0,
       methodUsed: 'C',
       needsReview: true,
@@ -523,22 +681,32 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
     const dyImg = (e.clientY - dragStartRef.current.clientY) * imgScaleY;
 
     if (activeDragType === 'pan') {
+      const nextCX = Math.max(
+        0,
+        Math.min(
+          loadedImage.naturalWidth,
+          dragStartRef.current!.startCenterX + dxImg
+        )
+      );
+      const nextCY = Math.max(
+        0,
+        Math.min(
+          loadedImage.naturalHeight,
+          dragStartRef.current!.startCenterY + dyImg
+        )
+      );
       setCropConfig((prev) => ({
         ...prev,
         quadCorners: undefined,
-        centerX: Math.max(
-          0,
-          Math.min(
-            loadedImage.naturalWidth,
-            dragStartRef.current!.startCenterX + dxImg
-          )
-        ),
-        centerY: Math.max(
-          0,
-          Math.min(
-            loadedImage.naturalHeight,
-            dragStartRef.current!.startCenterY + dyImg
-          )
+        personAlphaMatte: undefined,
+        centerX: nextCX,
+        centerY: nextCY,
+        normalizedFaceInCard: computeNormalizedFaceForCrop(
+          nextCX,
+          nextCY,
+          prev.baseCropHeight,
+          prev.scale,
+          prev.aspectRatio
         ),
       }));
     } else if (activeDragType === 'resize') {
@@ -556,8 +724,16 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
       setCropConfig((prev) => ({
         ...prev,
         quadCorners: undefined,
+        personAlphaMatte: undefined,
         baseCropHeight: newEffectiveHeight,
         scale: 1,
+        normalizedFaceInCard: computeNormalizedFaceForCrop(
+          prev.centerX,
+          prev.centerY,
+          newEffectiveHeight,
+          1,
+          prev.aspectRatio
+        ),
       }));
     } else if (activeDragType === 'draw_box') {
       const curXImg = Math.max(
@@ -581,14 +757,24 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
       const boxW = Math.max(20, x2 - x1);
       const boxH = Math.max(25, y2 - y1);
       const fittedH = Math.max(boxH, boxW / cropConfig.aspectRatio);
+      const nextCX = (x1 + x2) / 2;
+      const nextCY = (y1 + y2) / 2;
 
       setCropConfig((prev) => ({
         ...prev,
         quadCorners: undefined,
-        centerX: (x1 + x2) / 2,
-        centerY: (y1 + y2) / 2,
+        personAlphaMatte: undefined,
+        centerX: nextCX,
+        centerY: nextCY,
         baseCropHeight: fittedH,
         scale: 1,
+        normalizedFaceInCard: computeNormalizedFaceForCrop(
+          nextCX,
+          nextCY,
+          fittedH,
+          1,
+          prev.aspectRatio
+        ),
       }));
     }
   };
@@ -606,11 +792,21 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
     if (!loadedImage || !targetEmployee) return;
     setIsSavingToEmp(true);
     try {
-      const finalDataUrl = renderCroppedIdPhotoToDataUrl(
+      const variants = renderCroppedIdPhotoVariants(
         loadedImage,
         cropConfig,
         OUTPUT_3X4_WIDTH_PX
       );
+      const finalDataUrl =
+        variants.whiteDataUrl &&
+        variants.blueDataUrl &&
+        cropConfig.backdropMode === 'ca-hai' &&
+        isBackdropReplacementActive(cropConfig)
+          ? preferredCaHaiCardVariant === 'white'
+            ? variants.whiteDataUrl
+            : variants.blueDataUrl
+          : variants.primaryDataUrl;
+
       await onUpdateEmployeePhoto(targetEmployee, finalDataUrl);
       setStatusMessage({
         type: 'success',
@@ -629,24 +825,73 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
     }
   };
 
-  // Download exact 354 x 472 px (3x4 cm @ 300 DPI) JPEG to computer
+  // Download exact 354 x 472 px (3x4 cm @ 300 DPI) JPEG to computer (or 2 files when --phong = ca-hai)
   const handleDownloadCroppedImage = () => {
     if (!loadedImage) return;
-    const highResDataUrl = renderCroppedIdPhotoToDataUrl(
+    const variants = renderCroppedIdPhotoVariants(
       loadedImage,
       cropConfig,
       OUTPUT_3X4_WIDTH_PX
     );
-    const link = document.createElement('a');
     const methodTag = cropConfig.needsReview ? '_XEM' : '';
     const empPrefix = targetEmployee
       ? `${targetEmployee.msnv}_${targetEmployee.fullName.replace(/\s+/g, '_')}_`
       : '';
-    link.download = `Anh_3x4_300DPI_${empPrefix}354x472${methodTag}.jpg`;
-    link.href = highResDataUrl;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+
+    const triggerDownload = (dataUrl: string, suffix: string) => {
+      const link = document.createElement('a');
+      link.download = `Anh_3x4_300DPI_${empPrefix}354x472${suffix}${methodTag}.jpg`;
+      link.href = dataUrl;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    };
+
+    if (
+      variants.whiteDataUrl &&
+      variants.blueDataUrl &&
+      cropConfig.backdropMode === 'ca-hai' &&
+      isBackdropReplacementActive(cropConfig)
+    ) {
+      triggerDownload(variants.whiteDataUrl, '_trang');
+      setTimeout(() => {
+        triggerDownload(variants.blueDataUrl!, '_xanh');
+      }, 180);
+    } else {
+      triggerDownload(variants.primaryDataUrl, '');
+    }
+  };
+
+  // Save current --muc and --phong settings to cau_hinh.txt
+  const handleSaveDefaultCauHinh = (downloadTxt = false) => {
+    const cfg = {
+      muc: (cropConfig.sharpen === false
+        ? 0
+        : (cropConfig.enhanceLevel ?? 2)) as 0 | 1 | 2 | 3,
+      phong: (cropConfig.backdropMode || 'giu') as BackdropMode,
+      customHex: cropConfig.customBackdropHex || STANDARD_ID_BLUE_HEX,
+      epPhong: Boolean(cropConfig.forceBackdrop),
+      giuDau: !(cropConfig.removeRedStamp ?? true),
+      boVien: cropConfig.borderTrimRatio ?? 0.012,
+    };
+    saveDefaultCauHinh(cfg);
+    if (downloadTxt) {
+      const blob = new Blob([formatCauHinhTxt(cfg)], {
+        type: 'text/plain;charset=utf-8',
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'cau_hinh.txt';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+    setStatusMessage({
+      type: 'success',
+      text: `Đã lưu cấu hình mặc định (muc = ${cfg.muc}, phong = ${cfg.phong}, ep_phong = ${cfg.epPhong}) vào cau_hinh.txt!`,
+    });
   };
 
   // Batch AI Face Crop & Auto-Match to Employees by Filename
@@ -679,12 +924,12 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
         );
 
         if (matchedEmp) {
-          const dataUrl = renderCroppedIdPhotoToDataUrl(
+          const variants = renderCroppedIdPhotoVariants(
             img,
             { ...recommendedConfig, aspectRatio: currentAspectRatio },
             OUTPUT_3X4_WIDTH_PX
           );
-          await onUpdateEmployeePhoto(matchedEmp, dataUrl);
+          await onUpdateEmployeePhoto(matchedEmp, variants.primaryDataUrl);
           updatedCount++;
         }
       }
@@ -692,16 +937,16 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
       if (updatedCount > 0) {
         setStatusMessage({
           type: reviewCount > 0 ? 'warning' : 'success',
-          text: `Đã chạy quy trình A→B→C (354×472 px @ 300 DPI) và gán cho ${updatedCount}/${photoQueue.length} nhân viên.${
+          text: `Đã chạy quy trình A→B→A2→C (354×472 px @ 300 DPI) và gán cho ${updatedCount}/${photoQueue.length} nhân viên.${
             reviewCount > 0
-              ? ` Có ${reviewCount} ảnh dùng Cách C được đánh dấu "XEM" cần kiểm tra lại.`
+              ? ` Có ${reviewCount} ảnh dùng Cách C (đã tách nền theo --phong).`
               : ''
           }`,
         });
       } else {
         setStatusMessage({
           type: 'info',
-          text: `Đã chạy phân tích A→B→C cho ${photoQueue.length} ảnh (${reviewCount} ảnh đánh dấu "XEM"). Hãy chọn nhân viên ở cột phải để lưu.`,
+          text: `Đã chạy phân tích A→B→A2→C cho ${photoQueue.length} ảnh. Hãy chọn nhân viên ở cột phải để lưu.`,
         });
       }
     } finally {
@@ -736,12 +981,12 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
         try {
           const img = await loadImageFromFile(file);
           const { recommendedConfig } = await detectFacesInImage(img);
-          const dataUrl = renderCroppedIdPhotoToDataUrl(
+          const variants = renderCroppedIdPhotoVariants(
             img,
             { ...recommendedConfig, aspectRatio: currentAspectRatio },
             OUTPUT_3X4_WIDTH_PX
           );
-          await onUpdateEmployeePhoto(matchedEmp, dataUrl);
+          await onUpdateEmployeePhoto(matchedEmp, variants.primaryDataUrl);
           matchedLabels.push(`${matchedEmp.msnv} (${matchedEmp.fullName})`);
         } catch {
           unmatchedFiles.push(file.name);
@@ -881,6 +1126,37 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Active Task Execution Loading Banner */}
+      {(isDetecting ||
+        isSegmentingBg ||
+        isBatchProcessing ||
+        isSavingToEmp ||
+        Boolean(directMsnvProgress)) && (
+        <div className="p-4 rounded-xl border-2 border-blue-500 bg-blue-950 text-white shadow-md flex flex-col gap-2.5 animate-fadeIn">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 text-xs font-bold tracking-wide">
+              <Loader2 className="w-4 h-4 text-cyan-400 animate-spin shrink-0" />
+              <span>
+                {directMsnvProgress
+                  ? `Đang thực thi: Cắt & xóa phông tự động theo MSNV (${directMsnvProgress.current}/${directMsnvProgress.total} ảnh)...`
+                  : isBatchProcessing
+                    ? 'Đang thực thi: Xử lý hàng loạt A→B→A2→C & gán ảnh 3×4 cho nhân viên...'
+                    : isSavingToEmp
+                      ? 'Đang thực thi: Lưu ảnh thẻ 3×4 (354×472 px @ 300 DPI) vào hồ sơ nhân viên...'
+                      : activeTaskLabel ||
+                        'Đang thực thi: Cắt ảnh thẻ 3×4 & tách xóa phông nền AI...'}
+              </span>
+            </div>
+            <span className="text-[10px] font-mono-num px-2 py-0.5 rounded bg-blue-800 text-cyan-200 border border-blue-700 shrink-0">
+              ĐANG XỬ LÝ...
+            </span>
+          </div>
+          <div className="w-full h-1.5 bg-blue-900 rounded-full overflow-hidden">
+            <div className="h-full w-2/3 bg-gradient-to-r from-cyan-400 via-blue-400 to-emerald-400 rounded-full animate-pulse" />
+          </div>
+        </div>
+      )}
 
       {/* Status Alert Banner */}
       {statusMessage && (
@@ -1092,10 +1368,11 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
           ) : (
             <div className="p-4 bg-slate-900 flex flex-col items-center justify-center min-h-[440px] relative select-none overflow-hidden">
               {isDetecting && (
-                <div className="absolute inset-0 z-30 bg-slate-900/75 flex flex-col items-center justify-center text-white gap-2">
-                  <ScanFace className="w-9 h-9 text-blue-400 animate-pulse" />
+                <div className="absolute inset-0 z-30 bg-slate-900/80 backdrop-blur-[1px] flex flex-col items-center justify-center text-white gap-2.5 p-4 text-center">
+                  <Loader2 className="w-10 h-10 text-cyan-400 animate-spin" />
                   <span className="text-xs font-bold tracking-wide">
-                    Đang chạy quy trình A → B → C (dò mặt &amp; lần phông nền quanh đầu)...
+                    {activeTaskLabel ||
+                      'Đang chạy quy trình A → B → A2 → C...'}
                   </span>
                 </div>
               )}
@@ -1110,13 +1387,24 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                 onWheel={(e) => {
                   e.preventDefault();
                   const factor = e.deltaY < 0 ? 1.08 : 0.92;
-                  setCropConfig((prev) => ({
-                    ...prev,
-                    scale: Math.max(
+                  setCropConfig((prev) => {
+                    const nextScale = Math.max(
                       0.15,
                       Math.min(10.0, Number((prev.scale * factor).toFixed(2)))
-                    ),
-                  }));
+                    );
+                    return {
+                      ...prev,
+                      personAlphaMatte: undefined,
+                      scale: nextScale,
+                      normalizedFaceInCard: computeNormalizedFaceForCrop(
+                        prev.centerX,
+                        prev.centerY,
+                        prev.baseCropHeight,
+                        nextScale,
+                        prev.aspectRatio
+                      ),
+                    };
+                  });
                 }}
                 className={`relative inline-block max-w-full max-h-[500px] touch-none ${
                   interactionMode === 'draw' ? 'cursor-crosshair' : 'cursor-move'
@@ -1364,13 +1652,24 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                     <button
                       type="button"
                       onClick={() =>
-                        setCropConfig((p) => ({
-                          ...p,
-                          scale: Math.max(
+                        setCropConfig((p) => {
+                          const nextScale = Math.max(
                             0.2,
                             Number((p.scale * 0.88).toFixed(2))
-                          ),
-                        }))
+                          );
+                          return {
+                            ...p,
+                            personAlphaMatte: undefined,
+                            scale: nextScale,
+                            normalizedFaceInCard: computeNormalizedFaceForCrop(
+                              p.centerX,
+                              p.centerY,
+                              p.baseCropHeight,
+                              nextScale,
+                              p.aspectRatio
+                            ),
+                          };
+                        })
                       }
                       className="p-1 bg-white border border-slate-300 rounded hover:bg-slate-100 cursor-pointer"
                     >
@@ -1382,24 +1681,44 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                       max={6.0}
                       step={0.02}
                       value={cropConfig.scale}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const nextScale = Number(e.target.value);
                         setCropConfig((p) => ({
                           ...p,
-                          scale: Number(e.target.value),
-                        }))
-                      }
+                          personAlphaMatte: undefined,
+                          scale: nextScale,
+                          normalizedFaceInCard: computeNormalizedFaceForCrop(
+                            p.centerX,
+                            p.centerY,
+                            p.baseCropHeight,
+                            nextScale,
+                            p.aspectRatio
+                          ),
+                        }));
+                      }}
                       className="flex-1 accent-blue-700"
                     />
                     <button
                       type="button"
                       onClick={() =>
-                        setCropConfig((p) => ({
-                          ...p,
-                          scale: Math.min(
+                        setCropConfig((p) => {
+                          const nextScale = Math.min(
                             6.0,
                             Number((p.scale * 1.12).toFixed(2))
-                          ),
-                        }))
+                          );
+                          return {
+                            ...p,
+                            personAlphaMatte: undefined,
+                            scale: nextScale,
+                            normalizedFaceInCard: computeNormalizedFaceForCrop(
+                              p.centerX,
+                              p.centerY,
+                              p.baseCropHeight,
+                              nextScale,
+                              p.aspectRatio
+                            ),
+                          };
+                        })
                       }
                       className="p-1 bg-white border border-slate-300 rounded hover:bg-slate-100 cursor-pointer"
                     >
@@ -1422,6 +1741,7 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                         setCropConfig((p) => ({
                           ...p,
                           quadCorners: undefined,
+                          personAlphaMatte: undefined,
                           rotationDeg: 0,
                         }))
                       }
@@ -1440,6 +1760,7 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                       setCropConfig((p) => ({
                         ...p,
                         quadCorners: undefined,
+                        personAlphaMatte: undefined,
                         rotationDeg: Number(e.target.value),
                       }))
                     }
@@ -1489,6 +1810,103 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                   </div>
                 </div>
 
+                {/* Portrait Backdrop Segmentation (--phong & --ep-phong) */}
+                <div className="pt-2 border-t border-slate-200 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="font-semibold text-slate-700">
+                      Tách nền AI &amp; Đặt phông (--phong):
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-blue-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(cropConfig.forceBackdrop)}
+                        onChange={(e) =>
+                          setCropConfig((p) => ({
+                            ...p,
+                            forceBackdrop: e.target.checked,
+                            personAlphaMatte: undefined,
+                          }))
+                        }
+                        className="rounded accent-blue-700"
+                      />
+                      Ép đổi phông cả ảnh đã có phông (--ep-phong)
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {(
+                      [
+                        { mode: 'giu', label: 'Giữ nền cũ' },
+                        { mode: 'ca-hai', label: 'Cả hai (2 file)' },
+                        { mode: 'trang', label: 'Phông Trắng' },
+                        { mode: 'xanh', label: 'Phông Xanh' },
+                        { mode: 'custom', label: 'Mã #RRGGBB' },
+                      ] as const
+                    ).map(({ mode, label }) => {
+                      const activeMode = cropConfig.backdropMode || 'giu';
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() =>
+                            setCropConfig((p) => ({
+                              ...p,
+                              backdropMode: mode,
+                              forceBackdrop: mode !== 'giu' ? true : false,
+                              personAlphaMatte:
+                                mode === 'giu' ? undefined : p.personAlphaMatte,
+                            }))
+                          }
+                          className={`py-1 px-1.5 rounded-lg font-bold border text-[11px] cursor-pointer transition-colors ${
+                            activeMode === mode
+                              ? 'bg-blue-700 text-white border-blue-700'
+                              : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {cropConfig.backdropMode === 'custom' && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <input
+                        type="color"
+                        value={
+                          cropConfig.customBackdropHex || STANDARD_ID_BLUE_HEX
+                        }
+                        onChange={(e) =>
+                          setCropConfig((p) => ({
+                            ...p,
+                            customBackdropHex: e.target.value,
+                            forceBackdrop: true,
+                          }))
+                        }
+                        className="w-8 h-7 rounded border border-slate-300 cursor-pointer"
+                      />
+                      <input
+                        type="text"
+                        value={
+                          cropConfig.customBackdropHex || STANDARD_ID_BLUE_HEX
+                        }
+                        onChange={(e) =>
+                          setCropConfig((p) => ({
+                            ...p,
+                            customBackdropHex: e.target.value,
+                            forceBackdrop: true,
+                          }))
+                        }
+                        placeholder="#1E6EC8"
+                        className="w-28 px-2 py-1 text-xs font-mono bg-white border border-slate-300 rounded"
+                      />
+                      <span className="text-[11px] text-slate-500">
+                        Mã màu phông tùy chỉnh (#RRGGBB)
+                      </span>
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1">
                   <button
                     type="button"
@@ -1514,7 +1932,11 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                   <button
                     type="button"
                     onClick={() =>
-                      setCropConfig((p) => ({ ...p, flipH: !p.flipH }))
+                      setCropConfig((p) => ({
+                        ...p,
+                        flipH: !p.flipH,
+                        personAlphaMatte: undefined,
+                      }))
                     }
                     className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border font-semibold cursor-pointer ${
                       cropConfig.flipH
@@ -1524,6 +1946,16 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                   >
                     <FlipHorizontal className="w-3.5 h-3.5" />
                     Lật ngang
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSaveDefaultCauHinh(false)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-emerald-700 hover:bg-emerald-50 bg-white border border-emerald-300 rounded-lg font-semibold cursor-pointer"
+                    title="Lưu mức chỉnh (--muc) và màu phông (--phong) mặc định vào cau_hinh.txt"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    Lưu cau_hinh.txt
                   </button>
 
                   <button
@@ -1549,7 +1981,16 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
         {/* Right 5 Columns: Live 3x4 Result (354x472 px) + ID Card Preview + Assign to Employee / Download */}
         <div className="lg:col-span-5 space-y-5">
           {/* Card 1: Cropped 3x4 Result + Assign to Employee */}
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden relative">
+            {(isDetecting || isSegmentingBg) && (
+              <div className="absolute inset-0 z-20 bg-white/80 backdrop-blur-[1px] flex flex-col items-center justify-center gap-2 p-4 text-center">
+                <Loader2 className="w-8 h-8 text-blue-700 animate-spin" />
+                <span className="text-xs font-bold text-slate-800">
+                  {activeTaskLabel ||
+                    'Đang xử lý cắt 3×4 & xóa phông nền AI...'}
+                </span>
+              </div>
+            )}
             <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
                 2. Ảnh Thẻ Sau Khi Cắt &amp; Nắn Thẳng (354 × 472 px)
@@ -1570,35 +2011,90 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
             </div>
 
             <div className="p-5 space-y-5">
-              {/* Side-by-side: Cropped Portrait + Specs */}
+              {/* Side-by-side: Cropped Portrait (or Dual White + Blue when --phong = ca-hai) + Specs */}
               <div className="flex flex-col sm:flex-row items-center gap-5 bg-slate-50 border border-slate-200 rounded-xl p-4">
-                <div
-                  style={{
-                    width: '118px',
-                    height: '157px',
-                  }}
-                  className="relative bg-white border-2 border-slate-800 shadow-sm overflow-hidden shrink-0 flex items-center justify-center"
-                >
-                  {croppedDataUrl ? (
-                    <>
-                      <img
-                        src={croppedDataUrl}
-                        alt="Cropped 3x4 354x472"
-                        className="w-full h-full object-cover"
-                      />
-                      {cropConfig.needsReview && (
-                        <span className="absolute top-1 right-1 px-1.5 py-0.5 text-[9px] font-mono-num font-bold bg-amber-400 text-slate-950 rounded shadow-xs">
-                          XEM
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    <div className="text-center p-2 text-slate-400 text-xs">
-                      <ImageIcon className="w-6 h-6 mx-auto mb-1 opacity-50" />
-                      Chưa có ảnh
+                {whiteVariantUrl &&
+                blueVariantUrl &&
+                cropConfig.backdropMode === 'ca-hai' &&
+                isBackdropReplacementActive(cropConfig) ? (
+                  <div className="flex items-center gap-2.5 shrink-0">
+                    <div
+                      onClick={() => setPreferredCaHaiCardVariant('white')}
+                      className={`cursor-pointer rounded-lg p-1 border-2 transition-all ${
+                        preferredCaHaiCardVariant === 'white'
+                          ? 'border-blue-600 bg-blue-50/60'
+                          : 'border-transparent hover:border-slate-300'
+                      }`}
+                      title="Bấm để dùng bản Phông Trắng lên thẻ nhân viên"
+                    >
+                      <div
+                        style={{ width: '92px', height: '123px' }}
+                        className="relative bg-white border border-slate-800 shadow-xs overflow-hidden"
+                      >
+                        <img
+                          src={whiteVariantUrl}
+                          alt="Phông Trắng"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div className="text-[10px] font-bold text-center mt-1 text-slate-700">
+                        Phông Trắng {preferredCaHaiCardVariant === 'white' ? '✓' : ''}
+                      </div>
                     </div>
-                  )}
-                </div>
+
+                    <div
+                      onClick={() => setPreferredCaHaiCardVariant('blue')}
+                      className={`cursor-pointer rounded-lg p-1 border-2 transition-all ${
+                        preferredCaHaiCardVariant === 'blue'
+                          ? 'border-blue-600 bg-blue-50/60'
+                          : 'border-transparent hover:border-slate-300'
+                      }`}
+                      title="Bấm để dùng bản Phông Xanh lên thẻ nhân viên"
+                    >
+                      <div
+                        style={{ width: '92px', height: '123px' }}
+                        className="relative bg-white border border-slate-800 shadow-xs overflow-hidden"
+                      >
+                        <img
+                          src={blueVariantUrl}
+                          alt="Phông Xanh"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div className="text-[10px] font-bold text-center mt-1 text-blue-700">
+                        Phông Xanh {preferredCaHaiCardVariant === 'blue' ? '✓' : ''}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      width: '118px',
+                      height: '157px',
+                    }}
+                    className="relative bg-white border-2 border-slate-800 shadow-sm overflow-hidden shrink-0 flex items-center justify-center"
+                  >
+                    {croppedDataUrl ? (
+                      <>
+                        <img
+                          src={croppedDataUrl}
+                          alt="Cropped 3x4 354x472"
+                          className="w-full h-full object-cover"
+                        />
+                        {cropConfig.needsReview && (
+                          <span className="absolute top-1 right-1 px-1.5 py-0.5 text-[9px] font-mono-num font-bold bg-amber-400 text-slate-950 rounded shadow-xs">
+                            XEM
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-center p-2 text-slate-400 text-xs">
+                        <ImageIcon className="w-6 h-6 mx-auto mb-1 opacity-50" />
+                        Chưa có ảnh
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="flex-1 space-y-2 text-xs">
                   <div className="font-bold text-slate-900">
@@ -1622,17 +2118,20 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                             ? 'Cách B (Mép tờ giấy ảnh trên nền trơn)'
                             : cropConfig.methodUsed === 'A2'
                               ? 'Cách A2 (3 đường thẳng quanh mặt trên hồ sơ)'
-                              : 'Cách C (Khung 3:4 quanh mặt [XEM])'}
+                              : 'Cách C (Khung 3:4 chuẩn tâm mắt + Tách nền AI)'}
                       </strong>
                     </li>
                     <li className="flex items-center gap-1.5">
                       <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      Xử lý hậu kỳ:{' '}
+                      Phông nền &amp; Hậu kỳ:{' '}
                       <strong className="text-slate-900">
+                        {isBackdropReplacementActive(cropConfig)
+                          ? `Tách nền AI (--phong: ${cropConfig.backdropMode || 'giu'}) · `
+                          : 'Giữ nền cũ · '}
                         {cropConfig.sharpen === false ||
                         cropConfig.enhanceLevel === 0
-                          ? 'Mức 0 (Giữ nguyên)'
-                          : `Chỉnh đẹp Mức ${cropConfig.enhanceLevel ?? 2} (Cân màu giấy trắng, khử nhiễu, tăng nét)`}
+                          ? 'Mức 0'
+                          : `Chỉnh đẹp Mức ${cropConfig.enhanceLevel ?? 2}`}
                       </strong>
                     </li>
                   </ul>
@@ -1645,7 +2144,12 @@ export const FaceCropStudioView: React.FC<FaceCropStudioViewProps> = ({
                       className="w-full inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-lg disabled:opacity-50 cursor-pointer transition-colors"
                     >
                       <Download className="w-3.5 h-3.5" />
-                      Tải Ảnh 3×4 (354×472 px @ 300 DPI)
+                      {whiteVariantUrl &&
+                      blueVariantUrl &&
+                      cropConfig.backdropMode === 'ca-hai' &&
+                      isBackdropReplacementActive(cropConfig)
+                        ? 'Tải 2 File Ảnh 3×4 (Phông Trắng + Phông Xanh)'
+                        : 'Tải Ảnh 3×4 (354×472 px @ 300 DPI)'}
                     </button>
                   </div>
                 </div>
@@ -1851,12 +2355,12 @@ export const DirectMsnvDropModal: React.FC<DirectMsnvDropModalProps> = ({
           }
 
           const { recommendedConfig } = await detectFacesInImage(img);
-          const dataUrl = renderCroppedIdPhotoToDataUrl(
+          const variants = renderCroppedIdPhotoVariants(
             img,
             { ...recommendedConfig, aspectRatio: 3 / 4 },
             OUTPUT_3X4_WIDTH_PX
           );
-          await onUpdateEmployeePhoto(matchedEmp, dataUrl);
+          await onUpdateEmployeePhoto(matchedEmp, variants.primaryDataUrl);
           nextSuccess.push({
             fileName: file.name,
             msnv: matchedEmp.msnv,

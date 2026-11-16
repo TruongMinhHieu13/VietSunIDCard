@@ -182,6 +182,19 @@ service cloud.firestore {
       data.updatedAt is timestamp;
     }
 
+    function isValidDepartment(data) {
+      return data.keys().hasAll([
+        'name', 'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'name', 'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+      isValidWorkspaceOwner(data.ownerId) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
     match /employees/{employeeId} {
       allow get: if isValidId(employeeId) && isValidWorkspaceOwner(existing().ownerId);
       allow list: if isValidWorkspaceOwner(existing().ownerId);
@@ -194,6 +207,20 @@ service cloud.firestore {
           'msnv', 'fullName', 'department', 'joinDate', 'photoUrl', 'printCount', 'lastPrintedAt', 'updatedAt'
         ]);
       allow delete: if isValidId(employeeId) && isValidWorkspaceOwner(existing().ownerId);
+    }
+
+    match /departments/{departmentId} {
+      allow get: if isValidId(departmentId) && isValidWorkspaceOwner(existing().ownerId);
+      allow list: if isValidWorkspaceOwner(existing().ownerId);
+      allow create: if isValidId(departmentId) && isValidDepartment(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(departmentId) && isValidDepartment(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'updatedAt'
+        ]);
+      allow delete: if isValidId(departmentId) && isValidWorkspaceOwner(existing().ownerId);
     }
 
     match /templates/{templateId} {
@@ -251,3 +278,4 @@ service cloud.firestore {
     }
   }
 }
+

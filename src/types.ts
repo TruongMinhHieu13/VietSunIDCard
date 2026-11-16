@@ -12,6 +12,14 @@ export interface Employee {
   updatedAt?: unknown;
 }
 
+export interface Department {
+  id: string;
+  name: string;
+  ownerId: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
 export type CardLayoutStyle =
   | 'vietsun_table'
   | 'modern_corporate'
@@ -243,22 +251,13 @@ export const DEFAULT_CARD_TEMPLATES: Omit<CardTemplate, 'id' | 'ownerId' | 'crea
 
 export const SAMPLE_EMPLOYEES_SEED = [
   {
-    msnv: '06868',
-    fullName: 'TÊN NHÂN VIÊN',
-    department: 'Bảo trì vận hành',
-    joinDate: '02/10/2026',
-    photoUrl: '',
-    printCount: 0,
-    lastPrintedAt: '',
-  },
-  {
     msnv: '90994',
     fullName: 'NGUYỄN VĂN HOÀNG',
     department: 'Bảo trì vận hành',
     joinDate: '05/10/2026',
     photoUrl: '',
-    printCount: 0,
-    lastPrintedAt: '',
+    printCount: 1,
+    lastPrintedAt: '05/10/2026',
   },
   {
     msnv: '90995',
@@ -266,8 +265,8 @@ export const SAMPLE_EMPLOYEES_SEED = [
     department: 'Kế toán - Tài chính',
     joinDate: '12/09/2026',
     photoUrl: '',
-    printCount: 0,
-    lastPrintedAt: '',
+    printCount: 1,
+    lastPrintedAt: '12/09/2026',
   },
   {
     msnv: '90996',
@@ -275,8 +274,8 @@ export const SAMPLE_EMPLOYEES_SEED = [
     department: 'Sản xuất - Kỹ thuật',
     joinDate: '15/08/2026',
     photoUrl: '',
-    printCount: 0,
-    lastPrintedAt: '',
+    printCount: 1,
+    lastPrintedAt: '15/08/2026',
   },
   {
     msnv: '90997',
@@ -284,8 +283,8 @@ export const SAMPLE_EMPLOYEES_SEED = [
     department: 'Hành chính - Nhân sự',
     joinDate: '01/06/2026',
     photoUrl: '',
-    printCount: 0,
-    lastPrintedAt: '',
+    printCount: 1,
+    lastPrintedAt: '01/06/2026',
   },
   {
     msnv: '90998',
@@ -293,8 +292,8 @@ export const SAMPLE_EMPLOYEES_SEED = [
     department: 'Kho vận - Logistics',
     joinDate: '20/10/2026',
     photoUrl: '',
-    printCount: 0,
-    lastPrintedAt: '',
+    printCount: 1,
+    lastPrintedAt: '20/10/2026',
   },
   {
     msnv: '90999',
@@ -302,8 +301,8 @@ export const SAMPLE_EMPLOYEES_SEED = [
     department: 'Kiểm soát chất lượng (QC)',
     joinDate: '25/10/2026',
     photoUrl: '',
-    printCount: 0,
-    lastPrintedAt: '',
+    printCount: 1,
+    lastPrintedAt: '25/10/2026',
   },
   {
     msnv: '91000',
@@ -311,7 +310,8 @@ export const SAMPLE_EMPLOYEES_SEED = [
     department: 'Kinh doanh - Xuất nhập khẩu',
     joinDate: '01/11/2026',
     photoUrl: '',
-    printCount: 0,
-    lastPrintedAt: '',
+    printCount: 1,
+    lastPrintedAt: '01/11/2026',
   },
 ];
+

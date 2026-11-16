@@ -477,12 +477,43 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "Department": {
+      "title": "Department",
+      "description": "Company department record managed via popup modal",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Department name",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["name", "ownerId", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
     "/employees/{employeeId}": {
       "schema": { "$ref": "#/entities/Employee" },
       "description": "Employee master records"
+    },
+    "/departments/{departmentId}": {
+      "schema": { "$ref": "#/entities/Department" },
+      "description": "Managed company departments"
     },
     "/templates/{templateId}": {
       "schema": { "$ref": "#/entities/CardTemplate" },
@@ -502,3 +533,4 @@
     }
   }
 }
+

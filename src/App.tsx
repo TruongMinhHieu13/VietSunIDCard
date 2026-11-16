@@ -37,6 +37,7 @@ import {
   AppSettings,
   CardTemplate,
   DEFAULT_CARD_TEMPLATES,
+  Department,
   Employee,
   ImportHistory,
   OFFICIAL_VIETSUN_FAVICON,
@@ -63,17 +64,58 @@ function generateSafeId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function getEmployeeCreatedAtMs(emp: Employee): number {
+  const c = emp.createdAt as
+    | number
+    | string
+    | { toMillis?: () => number; seconds?: number; nanoseconds?: number }
+    | undefined;
+  if (typeof c === 'number' && !Number.isNaN(c)) return c;
+  if (typeof c === 'string') {
+    const parsed = Date.parse(c);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  if (c && typeof c === 'object') {
+    if (typeof c.toMillis === 'function') return c.toMillis();
+    if (typeof c.seconds === 'number') {
+      return c.seconds * 1000 + Math.floor((c.nanoseconds || 0) / 1e6);
+    }
+  }
+  const idMatch = emp.id?.match(/^emp_(\d{10,15})_/);
+  if (idMatch) {
+    return parseInt(idMatch[1], 10);
+  }
+  return 0;
+}
+
+function sortEmployeesNewestFirst(a: Employee, b: Employee): number {
+  const timeDiff = getEmployeeCreatedAtMs(b) - getEmployeeCreatedAtMs(a);
+  if (timeDiff !== 0) return timeDiff;
+  return a.msnv.localeCompare(b.msnv, undefined, { numeric: true });
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   // Firestore synced state (no login required — personal self-use workspace)
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [templates, setTemplates] = useState<CardTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const [importLogs, setImportLogs] = useState<ImportHistory[]>([]);
   const [printLogs, setPrintLogs] = useState<PrintHistory[]>([]);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [settings, setSettings] = useState<AppSettings | null>(() => {
+    try {
+      const raw = localStorage.getItem('vietsun_system_settings_v1');
+      if (raw) {
+        return JSON.parse(raw) as AppSettings;
+      }
+    } catch {
+      // ignore storage read error
+    }
+    return null;
+  });
 
   // Selected employees for batch printing
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<Set<string>>(
@@ -99,38 +141,45 @@ export default function App() {
   // Load workspace data once from Firestore using getDocs (no continuous realtime connection)
   const loadWorkspaceData = async () => {
     try {
-      const [empSnap, tplSnap, impSnap, prtSnap, setSnap] = await Promise.all([
-        getDocs(
-          query(
-            collection(db, 'employees'),
-            where('ownerId', '==', WORKSPACE_ID)
-          )
-        ),
-        getDocs(
-          query(
-            collection(db, 'templates'),
-            where('ownerId', '==', WORKSPACE_ID)
-          )
-        ),
-        getDocs(
-          query(
-            collection(db, 'import_logs'),
-            where('ownerId', '==', WORKSPACE_ID)
-          )
-        ),
-        getDocs(
-          query(
-            collection(db, 'print_logs'),
-            where('ownerId', '==', WORKSPACE_ID)
-          )
-        ),
-        getDocs(
-          query(
-            collection(db, 'settings'),
-            where('ownerId', '==', WORKSPACE_ID)
-          )
-        ),
-      ]);
+      const [empSnap, deptSnap, tplSnap, impSnap, prtSnap, setSnap] =
+        await Promise.all([
+          getDocs(
+            query(
+              collection(db, 'employees'),
+              where('ownerId', '==', WORKSPACE_ID)
+            )
+          ),
+          getDocs(
+            query(
+              collection(db, 'departments'),
+              where('ownerId', '==', WORKSPACE_ID)
+            )
+          ),
+          getDocs(
+            query(
+              collection(db, 'templates'),
+              where('ownerId', '==', WORKSPACE_ID)
+            )
+          ),
+          getDocs(
+            query(
+              collection(db, 'import_logs'),
+              where('ownerId', '==', WORKSPACE_ID)
+            )
+          ),
+          getDocs(
+            query(
+              collection(db, 'print_logs'),
+              where('ownerId', '==', WORKSPACE_ID)
+            )
+          ),
+          getDocs(
+            query(
+              collection(db, 'settings'),
+              where('ownerId', '==', WORKSPACE_ID)
+            )
+          ),
+        ]);
 
       if (tplSnap.empty && !hasBootstrappedRef.current) {
         hasBootstrappedRef.current = true;
@@ -138,83 +187,135 @@ export default function App() {
         return;
       }
 
-      // One-time clean history reset requested by user ("Xóa sạch lịch sử đi. Giờ sẽ bắt đầu lại")
-      const shouldWipeHistoryOnce =
-        typeof window !== 'undefined' &&
-        localStorage.getItem('vietsun_history_wipe_clean_v1') !== 'done';
-
-      if (shouldWipeHistoryOnce) {
-        localStorage.setItem('vietsun_history_wipe_clean_v1', 'done');
-        const wipeBatch = writeBatch(db);
-        let opsCount = 0;
-
-        impSnap.docs.forEach((d) => {
-          if (opsCount < 450) {
-            wipeBatch.delete(doc(db, 'import_logs', d.id));
-            opsCount++;
-          }
-        });
-
-        prtSnap.docs.forEach((d) => {
-          if (opsCount < 450) {
-            wipeBatch.delete(doc(db, 'print_logs', d.id));
-            opsCount++;
-          }
-        });
-
-        empSnap.docs.forEach((d) => {
+      // Mark all existing employees in database as printed 1 time ("Danh sách nhân viên giờ bạn sửa lại database đánh dấu là đã in 1 lần đi tại đây là danh sách nhân viên đã vào làm và in thẻ rồi")
+      const allCurrentlyUnprinted =
+        empSnap.docs.length > 0 &&
+        empSnap.docs.every((d) => {
           const data = d.data() as Omit<Employee, 'id'>;
-          if (
-            (data.printCount && data.printCount > 0) ||
-            (data.lastPrintedAt && data.lastPrintedAt !== '')
-          ) {
-            if (opsCount < 450) {
-              wipeBatch.update(doc(db, 'employees', d.id), {
-                printCount: 0,
-                lastPrintedAt: '',
-                updatedAt: serverTimestamp(),
-              });
-              opsCount++;
-            }
-          }
+          return !data.printCount || data.printCount === 0;
         });
 
-        if (opsCount > 0) {
-          await wipeBatch.commit();
+      const shouldMarkAllPrintedOnce =
+        (typeof window !== 'undefined' &&
+          localStorage.getItem('vietsun_mark_all_employees_printed_once_v1') !==
+            'done') ||
+        allCurrentlyUnprinted;
+
+      if (shouldMarkAllPrintedOnce && empSnap.docs.length > 0) {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(
+            'vietsun_mark_all_employees_printed_once_v1',
+            'done'
+          );
+        }
+        const todayStr = new Date().toLocaleDateString('vi-VN');
+        const docsToUpdate = empSnap.docs.filter((d) => {
+          const data = d.data() as Omit<Employee, 'id'>;
+          return !data.printCount || data.printCount < 1;
+        });
+
+        const CHUNK_SIZE = 400;
+        for (let i = 0; i < docsToUpdate.length; i += CHUNK_SIZE) {
+          const chunk = docsToUpdate.slice(i, i + CHUNK_SIZE);
+          const batch = writeBatch(db);
+          chunk.forEach((d) => {
+            const data = d.data() as Omit<Employee, 'id'>;
+            batch.update(doc(db, 'employees', d.id), {
+              printCount: 1,
+              lastPrintedAt: data.lastPrintedAt || data.joinDate || todayStr,
+              updatedAt: serverTimestamp(),
+            });
+          });
+          await batch.commit();
         }
       }
 
-      // 1. Employees (Also migrate old demo record 90993 / TRƯƠNG MINH HIẾU -> 06868 / TÊN NHÂN VIÊN)
+      // 1. Employees (Clean up any leftover 06868 / TÊN NHÂN VIÊN test card record from database)
+      const shouldCleanTest06868 =
+        typeof window !== 'undefined' &&
+        localStorage.getItem('vietsun_cleanup_test_06868_v1') !== 'done';
+      if (shouldCleanTest06868 && typeof window !== 'undefined') {
+        localStorage.setItem('vietsun_cleanup_test_06868_v1', 'done');
+      }
+
+      const todayFallback = new Date().toLocaleDateString('vi-VN');
       const empList: Employee[] = [];
       for (const d of empSnap.docs) {
         const raw = d.data() as Omit<Employee, 'id'>;
-        const isOldDemo =
-          raw.msnv === '90993' ||
-          raw.fullName?.trim().toUpperCase() === 'TRƯƠNG MINH HIẾU';
-        const nextMsnv = isOldDemo ? '06868' : raw.msnv;
-        const nextFullName = isOldDemo ? 'TÊN NHÂN VIÊN' : raw.fullName;
+        const isTestDemoCard =
+          raw.msnv?.trim() === '06868' ||
+          raw.fullName?.trim().toUpperCase() === 'TÊN NHÂN VIÊN';
 
-        if (isOldDemo && (raw.msnv !== '06868' || raw.fullName !== 'TÊN NHÂN VIÊN')) {
-          updateDoc(doc(db, 'employees', d.id), {
-            msnv: '06868',
-            fullName: 'TÊN NHÂN VIÊN',
-            updatedAt: serverTimestamp(),
-          }).catch(() => {});
+        if (isTestDemoCard && shouldCleanTest06868) {
+          deleteDoc(doc(db, 'employees', d.id)).catch(() => {});
+          continue;
         }
+
+        const effectivePrintCount = shouldMarkAllPrintedOnce
+          ? Math.max(1, raw.printCount || 0)
+          : raw.printCount || 0;
+        const effectiveLastPrintedAt = shouldMarkAllPrintedOnce
+          ? raw.lastPrintedAt || raw.joinDate || todayFallback
+          : raw.lastPrintedAt || '';
 
         empList.push({
           id: d.id,
           ...raw,
-          msnv: nextMsnv,
-          fullName: nextFullName,
-          printCount: shouldWipeHistoryOnce ? 0 : raw.printCount || 0,
-          lastPrintedAt: shouldWipeHistoryOnce ? '' : raw.lastPrintedAt || '',
+          printCount: effectivePrintCount,
+          lastPrintedAt: effectiveLastPrintedAt,
         });
       }
-      empList.sort((a, b) =>
-        a.msnv.localeCompare(b.msnv, undefined, { numeric: true })
-      );
+      empList.sort(sortEmployeesNewestFirst);
       setEmployees(empList);
+
+      // 1b. Departments (Seed from existing employees on first run if departments collection is empty)
+      let deptList: Department[] = deptSnap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<Department, 'id'>),
+      }));
+
+      if (deptList.length === 0) {
+        const uniqueNames = new Set<string>();
+        empList.forEach((e) => {
+          const clean = e.department?.trim();
+          if (clean) uniqueNames.add(clean);
+        });
+        if (uniqueNames.size === 0) {
+          [
+            'BGĐ',
+            'BP. Bảo trì vận hành',
+            'BP. Hành chính - Nhân sự',
+            'BP. Kế toán - Tài chính',
+            'BP. Sản xuất - Kỹ thuật',
+            'BP. Kho vận - Logistics',
+            'BP. Kiểm soát chất lượng (QC)',
+          ].forEach((n) => uniqueNames.add(n));
+        }
+        const seedBatch = writeBatch(db);
+        const seededDepts: Department[] = [];
+        Array.from(uniqueNames)
+          .sort((a, b) => a.localeCompare(b, 'vi'))
+          .forEach((name, idx) => {
+            const deptId = `dept_vietsun_${idx + 1}_${Date.now()}`;
+            const deptObj: Department = {
+              id: deptId,
+              name: name.slice(0, 120),
+              ownerId: WORKSPACE_ID,
+            };
+            seededDepts.push(deptObj);
+            seedBatch.set(doc(db, 'departments', deptId), {
+              name: deptObj.name,
+              ownerId: WORKSPACE_ID,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          });
+        await seedBatch.commit().catch(() => {});
+        deptList = seededDepts;
+      } else {
+        deptList.sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+      }
+      setDepartments(deptList);
 
       // 2. Templates
       const tplList: CardTemplate[] = tplSnap.docs.map((d) => {
@@ -242,32 +343,37 @@ export default function App() {
       }
 
       // 3. Import Logs
-      const impList: ImportHistory[] = shouldWipeHistoryOnce
-        ? []
-        : impSnap.docs.map((d) => ({
-            id: d.id,
-            ...(d.data() as Omit<ImportHistory, 'id'>),
-          }));
+      const impList: ImportHistory[] = impSnap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<ImportHistory, 'id'>),
+      }));
       setImportLogs(impList);
 
       // 4. Print Logs
-      const prtList: PrintHistory[] = shouldWipeHistoryOnce
-        ? []
-        : prtSnap.docs.map((d) => ({
-            id: d.id,
-            ...(d.data() as Omit<PrintHistory, 'id'>),
-          }));
+      const prtList: PrintHistory[] = prtSnap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<PrintHistory, 'id'>),
+      }));
       setPrintLogs(prtList);
 
       // 5. Settings
       if (!setSnap.empty) {
         const d = setSnap.docs[0];
         const data = d.data() as Omit<AppSettings, 'id'>;
-        setSettings({
+        const loadedSettings: AppSettings = {
           id: d.id,
           ...data,
           logoUrl: data.logoUrl || OFFICIAL_VIETSUN_LOGO,
-        });
+        };
+        setSettings(loadedSettings);
+        try {
+          localStorage.setItem(
+            'vietsun_system_settings_v1',
+            JSON.stringify(loadedSettings)
+          );
+        } catch {
+          // ignore storage write error
+        }
       }
     } catch (err) {
       handleFirestoreError(err, OperationType.LIST, 'workspace');
@@ -363,9 +469,7 @@ export default function App() {
         setSelectedTemplateId(def.id);
       }
       setSettings(defaultSettings);
-      seededEmployees.sort((a, b) =>
-        a.msnv.localeCompare(b.msnv, undefined, { numeric: true })
-      );
+      seededEmployees.sort(sortEmployeesNewestFirst);
       setEmployees(seededEmployees);
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'bootstrap');
@@ -397,10 +501,8 @@ export default function App() {
       });
       if (addedList.length > 0) {
         setEmployees((prev) => {
-          const next = [...prev, ...addedList];
-          next.sort((a, b) =>
-            a.msnv.localeCompare(b.msnv, undefined, { numeric: true })
-          );
+          const next = [...addedList, ...prev];
+          next.sort(sortEmployeesNewestFirst);
           return next;
         });
         await batch.commit();
@@ -419,6 +521,7 @@ export default function App() {
     photoUrl: string;
   }): Promise<string> => {
     const id = generateSafeId('emp');
+    const nowMs = Date.now();
     const newEmp: Employee = {
       id,
       msnv: data.msnv.slice(0, 50),
@@ -429,13 +532,13 @@ export default function App() {
       printCount: 0,
       lastPrintedAt: '',
       ownerId: WORKSPACE_ID,
+      createdAt: nowMs,
+      updatedAt: nowMs,
     };
     flushSync(() => {
       setEmployees((prev) => {
-        const next = [...prev, newEmp];
-        next.sort((a, b) =>
-          a.msnv.localeCompare(b.msnv, undefined, { numeric: true })
-        );
+        const next = [newEmp, ...prev];
+        next.sort(sortEmployeesNewestFirst);
         return next;
       });
     });
@@ -479,9 +582,7 @@ export default function App() {
       const next = prev.map((emp) =>
         emp.id === id ? { ...emp, ...updatedFields } : emp
       );
-      next.sort((a, b) =>
-        a.msnv.localeCompare(b.msnv, undefined, { numeric: true })
-      );
+      next.sort(sortEmployeesNewestFirst);
       return next;
     });
     try {
@@ -514,13 +615,107 @@ export default function App() {
     setEmployees((prev) => prev.filter((emp) => !idSet.has(emp.id)));
     setSelectedEmployeeIds(new Set());
     try {
-      const batch = writeBatch(db);
-      ids.forEach((id) => {
-        batch.delete(doc(db, 'employees', id));
-      });
-      await batch.commit();
+      const CHUNK_SIZE = 400;
+      for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+        const chunk = ids.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
+        chunk.forEach((id) => {
+          batch.delete(doc(db, 'employees', id));
+        });
+        await batch.commit();
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, 'employees');
+    }
+  };
+
+  // Department CRUD Handlers (Managed via Popup Modal in Employee Management)
+  const handleAddDepartment = async (rawName: string): Promise<Department> => {
+    const cleanName = rawName.trim().slice(0, 120);
+    const existing = departments.find(
+      (d) => d.name.trim().toLowerCase() === cleanName.toLowerCase()
+    );
+    if (existing) return existing;
+
+    const id = generateSafeId('dept');
+    const newDept: Department = {
+      id,
+      name: cleanName,
+      ownerId: WORKSPACE_ID,
+    };
+    setDepartments((prev) =>
+      [...prev, newDept].sort((a, b) => a.name.localeCompare(b.name, 'vi'))
+    );
+    try {
+      await setDoc(doc(db, 'departments', id), {
+        name: cleanName,
+        ownerId: WORKSPACE_ID,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `departments/${id}`);
+    }
+    return newDept;
+  };
+
+  const handleUpdateDepartment = async (
+    id: string,
+    newRawName: string
+  ): Promise<void> => {
+    const cleanName = newRawName.trim().slice(0, 120);
+    if (!cleanName) return;
+    const oldDept = departments.find((d) => d.id === id);
+    const oldName = oldDept?.name;
+
+    setDepartments((prev) =>
+      prev
+        .map((d) => (d.id === id ? { ...d, name: cleanName } : d))
+        .sort((a, b) => a.name.localeCompare(b.name, 'vi'))
+    );
+
+    if (oldName && oldName !== cleanName) {
+      setEmployees((prev) =>
+        prev.map((emp) =>
+          emp.department === oldName ? { ...emp, department: cleanName } : emp
+        )
+      );
+    }
+
+    try {
+      await updateDoc(doc(db, 'departments', id), {
+        name: cleanName,
+        updatedAt: serverTimestamp(),
+      });
+
+      if (oldName && oldName !== cleanName) {
+        const affectedEmps = employees.filter(
+          (emp) => emp.department === oldName
+        );
+        const CHUNK_SIZE = 400;
+        for (let i = 0; i < affectedEmps.length; i += CHUNK_SIZE) {
+          const chunk = affectedEmps.slice(i, i + CHUNK_SIZE);
+          const batch = writeBatch(db);
+          chunk.forEach((emp) => {
+            batch.update(doc(db, 'employees', emp.id), {
+              department: cleanName,
+              updatedAt: serverTimestamp(),
+            });
+          });
+          await batch.commit();
+        }
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `departments/${id}`);
+    }
+  };
+
+  const handleDeleteDepartment = async (id: string): Promise<void> => {
+    setDepartments((prev) => prev.filter((d) => d.id !== id));
+    try {
+      await deleteDoc(doc(db, 'departments', id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `departments/${id}`);
     }
   };
 
@@ -566,9 +761,31 @@ export default function App() {
       createdAt: new Date().toISOString(),
     };
 
-    // Immediately update local employees, importLogs & selectedEmployeeIds state so UI reflects imported rows right away
+    // Detect any new department names from Excel rows so they are automatically added to the managed departments list
+    const existingDeptNamesLower = new Set(
+      departments.map((d) => d.name.trim().toLowerCase())
+    );
+    const newDeptsToCreate: Department[] = [];
+    preparedRows.forEach((row) => {
+      const deptClean = (row.department || '').trim().slice(0, 120);
+      if (
+        deptClean &&
+        !existingDeptNamesLower.has(deptClean.toLowerCase())
+      ) {
+        existingDeptNamesLower.add(deptClean.toLowerCase());
+        newDeptsToCreate.push({
+          id: generateSafeId('dept'),
+          name: deptClean,
+          ownerId: WORKSPACE_ID,
+          createdAt: Date.now(),
+        });
+      }
+    });
+
+    // Immediately update local employees, departments, importLogs & selectedEmployeeIds state so UI reflects imported rows right away
     if (importedIds.length > 0) {
       flushSync(() => {
+        const importBaseMs = Date.now();
         setEmployees((prev) => {
           const map = new Map<string, Employee>(prev.map((e) => [e.id, e]));
           preparedRows.forEach((row) => {
@@ -583,12 +800,19 @@ export default function App() {
               printCount: existing?.printCount || 0,
               lastPrintedAt: existing?.lastPrintedAt || '',
               ownerId: WORKSPACE_ID,
+              createdAt: existing?.createdAt ?? importBaseMs,
+              updatedAt: importBaseMs,
             });
           });
-          return Array.from(map.values()).sort((a, b) =>
-            a.msnv.localeCompare(b.msnv, undefined, { numeric: true })
-          );
+          return Array.from(map.values()).sort(sortEmployeesNewestFirst);
         });
+        if (newDeptsToCreate.length > 0) {
+          setDepartments((prev) =>
+            [...prev, ...newDeptsToCreate].sort((a, b) =>
+              a.name.localeCompare(b.name, 'vi')
+            )
+          );
+        }
         setImportLogs((prev) => [newImportLog, ...prev]);
         setSelectedEmployeeIds(new Set(importedIds));
         if (triggerPrintImmediately) {
@@ -602,6 +826,18 @@ export default function App() {
     }
 
     try {
+      if (newDeptsToCreate.length > 0) {
+        const deptBatch = writeBatch(db);
+        newDeptsToCreate.forEach((dept) => {
+          deptBatch.set(doc(db, 'departments', dept.id), {
+            name: dept.name,
+            ownerId: WORKSPACE_ID,
+            createdAt: serverTimestamp(),
+          });
+        });
+        await deptBatch.commit();
+      }
+
       const chunkSize = 400;
       for (let i = 0; i < preparedRows.length; i += chunkSize) {
         const slice = preparedRows.slice(i, i + chunkSize);
@@ -905,6 +1141,14 @@ export default function App() {
     };
     setSettings(nextSettings);
     try {
+      localStorage.setItem(
+        'vietsun_system_settings_v1',
+        JSON.stringify(nextSettings)
+      );
+    } catch {
+      // ignore storage write error
+    }
+    try {
       const { id: _id, ...settingsFields } = nextSettings;
       await setDoc(
         doc(db, 'settings', docId),
@@ -936,10 +1180,10 @@ export default function App() {
     defaultPaperSize: 'A4',
     defaultCols: 2,
     defaultRows: 4,
-    defaultGapMm: 0,
+    defaultGapMm: 4,
     defaultMarginMm: 10,
-    cardWidthMm: 100,
-    cardHeightMm: 50,
+    cardWidthMm: 85.6,
+    cardHeightMm: 54,
     ownerId: WORKSPACE_ID,
   };
 
@@ -1103,6 +1347,7 @@ export default function App() {
         {activeTab === 'employees' && (
           <EmployeeManagementView
             employees={employees}
+            departments={departments}
             selectedTemplate={activeTemplate}
             selectedEmployeeIds={selectedEmployeeIds}
             onChangeSelectedIds={setSelectedEmployeeIds}
@@ -1110,6 +1355,9 @@ export default function App() {
             onUpdateEmployee={handleUpdateEmployee}
             onDeleteEmployee={handleDeleteEmployee}
             onBatchDeleteEmployees={handleBatchDeleteEmployees}
+            onAddDepartment={handleAddDepartment}
+            onUpdateDepartment={handleUpdateDepartment}
+            onDeleteDepartment={handleDeleteDepartment}
             onOpenImportModal={() => setIsImportModalOpen(true)}
             onGoToBatchPrint={() => setActiveTab('print')}
             onOpenPrintDialog={handleOpenPrintDialog}
@@ -1148,6 +1396,7 @@ export default function App() {
         {activeTab === 'print' && (
           <BatchPrintView
             employees={employees}
+            departments={departments}
             templates={templates}
             selectedTemplate={activeTemplate}
             onSelectTemplate={(tpl) => setSelectedTemplateId(tpl.id)}

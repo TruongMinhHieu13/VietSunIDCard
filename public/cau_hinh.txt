@@ -1,0 +1,16 @@
+# Cấu hình mặc định công cụ cắt ảnh thẻ 3x4 (cau_hinh.txt)
+# Mức chỉnh đẹp (--muc): 0 = giữ nguyên, 1 = nhẹ, 2 = vừa (mặc định), 3 = mạnh
+muc = 2
+
+# Màu phông nền khi tách người khỏi nền (--phong):
+# giu (mặc định, giữ nền cũ) | trang | xanh | ca-hai (xuất 2 file) | #RRGGBB
+phong = giu
+
+# Ép đổi phông cho cả ảnh thẻ đã có phông sẵn (--ep-phong): true | false
+ep_phong = false
+
+# Giữ dấu đỏ đè lên ảnh thẻ (--giu-dau): true | false
+giu_dau = false
+
+# Tỉ lệ cắt bỏ viền mép (--bo-vien): mặc định 0.012
+bo_vien = 0.012

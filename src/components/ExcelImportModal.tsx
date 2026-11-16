@@ -20,6 +20,7 @@ import { compressImageTo3x4DataUrl } from './EmployeeManagementView';
 
 export interface ParsedExcelRow {
   rowNumber: number;
+  stt?: string;
   msnv: string;
   lastName?: string;
   firstName?: string;
@@ -36,6 +37,7 @@ export interface ParsedExcelRow {
 
 interface RawExtractedRow {
   rowNumber: number;
+  stt: string;
   msnv: string;
   lastName: string;
   firstName: string;
@@ -44,6 +46,16 @@ interface RawExtractedRow {
   jobTitle: string;
   joinDate: string;
   isHiddenInExcel: boolean;
+}
+
+interface DetectedColMap {
+  stt: string;
+  dept: string;
+  msnv: string;
+  ho: string;
+  ten: string;
+  job: string;
+  date: string;
 }
 
 interface ExcelImportModalProps {
@@ -156,7 +168,11 @@ function readCellDate(worksheet: XLSX.WorkSheet, r: number, c: number): string {
 }
 
 export function downloadSampleExcelTemplate() {
-  // Exact 12-column (A -> L) structure matching VietSun HR file (Columns G -> L used for ID cards)
+  // Exact layout matching user's VietSun Excel file:
+  // Row 1-2: VIETSUN | DANH SÁCH CÁN BỘ CÔNG NHÂN VIÊN
+  // Row 3-4 (merged): STT (Col A) | [B, C, D hidden] | PHÒNG BAN CON (Col E) | MSNV (Col F) | HỌ (Col G) | TÊN (Col H) | CÔNG VIỆC (Col I) | NGÀY VÀO (Col J)
+  // Row 5: No | Bophancon6 | Manhanvien2222 | Ho | Ten | Congviec | Ngayvaocty
+  // Row 6+: Data rows
   const aoa: unknown[][] = [
     [
       'VIETSUN',
@@ -165,19 +181,16 @@ export function downloadSampleExcelTemplate() {
       '',
       '',
       '',
-      '',
-      '',
-      '',
       'DANH SÁCH CÁN BỘ CÔNG NHÂN VIÊN',
       '',
       '',
+      '',
     ],
+    ['Warming Your Life', '', '', '', '', '', '', '', '', ''],
     [
       'STT',
       'ĐƠN VỊ',
-      'Tình trạng',
       'KHỐI',
-      'KÝ HIỆU PB',
       'PHÒNG BAN',
       'PHÒNG BAN CON',
       'MSNV',
@@ -186,48 +199,79 @@ export function downloadSampleExcelTemplate() {
       'CÔNG VIỆC',
       'NGÀY VÀO',
     ],
+    ['', '', '', '', '', '', '', '', '', ''],
     [
       'No',
       'Donvi',
-      'Tinhtrang',
-      '',
-      'Tinhtrang',
+      'Khoi',
       'Bophan5',
       'Bophancon6',
-      'Manhanvien',
+      'Manhanvien2222',
       'Ho',
       'Ten',
       'Congviec',
       'Ngayvaocty',
     ],
-    [1, 'XMAY 03', 'LV', 'GTSX', 'P8', 'Tổ Kỹ thuật triển khai', 'Tổ Triển khai sản xuất', '00441', 'Dương Minh', 'Tuấn', 'Nhân viên Kỹ thuật triển khai', '15/08/2025'],
-    [2, 'XMAY 03', 'LV', 'TTSX', 'P14', 'Tổ Cơ động', 'Tổ Cơ động', '91051', 'Lâm Thị Thu', 'Thuỷ', 'Công nhân vận hành máy may công nghiệp', '02/11/2026'],
-    [3, 'XMAY 03', 'LV', 'GTSX', 'P7', 'Phòng quản lý chất lượng', 'Tổ QC', '91052', 'Nguyễn Thị Hồng', 'Linh', 'Công nhân QC ENDLINE', '02/11/2026'],
-    [4, 'XMAY 03', 'LV', 'TTSX', 'P15', 'Chuyền may', 'Chuyền may 01-02', '91053', 'Phạm Thị Bích', 'Hoa', 'Công nhân vận hành máy may công nghiệp', '02/11/2026'],
-    [5, 'XMAY 03', 'LV', 'TTSX', 'P15', 'Chuyền may', 'Chuyền may 11-02', '91054', 'Thị', 'Minh', 'Công nhân vận hành máy may công nghiệp', '04/11/2026'],
-    [6, 'XMAY 03', 'LV', 'GTSX', 'P16', 'Tổ Hoàn Thành', 'Nhóm hoàn thành', '91055', 'Nguyễn Văn', 'Hải', 'Công nhân đóng thùng', '04/11/2026'],
-    [7, 'XMAY 03', 'LV', 'TTSX', 'P15', 'Chuyền may', 'Chuyền may 04-02', '91056', 'Nguyễn Minh', 'Trí', 'Công nhân ủi', '04/11/2026'],
-    [8, 'XMAY 03', 'LV', 'GTSX', 'P16', 'Tổ Hoàn Thành', 'Nhóm gấp xếp', '91058', 'Trần Thị Hồng', 'Thắm', 'Công nhân gấp xếp', '11/07/2026'],
-    [9, 'XMAY 03', 'LV', 'TTSX', 'P15', 'Chuyền may', 'Chuyền may 12-02', '91059', 'Nguyễn Thị Ánh', 'Hội', 'Công nhân vận hành máy may công nghiệp', '09/11/2026'],
-    [10, 'XMAY 03', 'LV', 'TTSX', 'P15', 'Chuyền may', 'Chuyền may 12-02', '91060', 'Trương Thị Phương', 'Thảo', 'Công nhân vận hành máy may công nghiệp', '10/11/2026'],
-    [11, 'XMAY 03', 'LV', 'Văn phòng', 'P6', 'Phòng Bảo trì vận hành', 'BP. Bảo trì vận hành', '91061', 'Phạm Văn', 'Việt', 'Nhân viên bảo trì vận hành', '10/11/2026'],
-    [12, 'XMAY 03', 'LV', 'TTSX', 'P14', 'Tổ Cơ động', 'Tổ Cơ động', '91062', 'Lê Hồng', 'Nhung', 'Công nhân vận hành máy may công nghiệp', '12/11/2026'],
+    [
+      1,
+      'VIETSUN',
+      'VP',
+      'BGĐ',
+      'BGĐ',
+      '10448',
+      'Đỗ Đăng Quốc',
+      'Huy',
+      'Giám đốc Điều hành',
+      '01/09/2025',
+    ],
+    [
+      2,
+      'VIETSUN',
+      'VP',
+      'Phòng Bảo trì vận hành',
+      'BP. Bảo trì vận hành',
+      '00455',
+      'Bùi Nhật',
+      'Duy',
+      'Nhân viên IT',
+      '21/10/2025',
+    ],
+    [
+      3,
+      'VIETSUN',
+      'VP',
+      'Phòng Bảo trì vận hành',
+      'BP. Bảo trì vận hành',
+      '90063',
+      'Phạm Văn',
+      'Hiếu',
+      'Nhân viên bảo trì vận hành',
+      '03/09/2025',
+    ],
   ];
 
   const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+  worksheet['!merges'] = [
+    { s: { r: 0, c: 6 }, e: { r: 1, c: 9 } }, // DANH SÁCH CÁN BỘ CÔNG NHÂN VIÊN
+    { s: { r: 2, c: 0 }, e: { r: 3, c: 0 } }, // STT (A3:A4)
+    { s: { r: 2, c: 4 }, e: { r: 3, c: 4 } }, // PHÒNG BAN CON (E3:E4)
+    { s: { r: 2, c: 5 }, e: { r: 3, c: 5 } }, // MSNV (F3:F4)
+    { s: { r: 2, c: 6 }, e: { r: 3, c: 6 } }, // HỌ (G3:G4)
+    { s: { r: 2, c: 7 }, e: { r: 3, c: 7 } }, // TÊN (H3:H4)
+    { s: { r: 2, c: 8 }, e: { r: 3, c: 8 } }, // CÔNG VIỆC (I3:I4)
+    { s: { r: 2, c: 9 }, e: { r: 3, c: 9 } }, // NGÀY VÀO (J3:J4)
+  ];
   worksheet['!cols'] = [
-    { wch: 6 },  // A: STT
-    { wch: 11 }, // B: ĐƠN VỊ
-    { wch: 10 }, // C: Tình trạng
-    { wch: 10 }, // D: KHỐI
-    { wch: 12 }, // E: KÝ HIỆU PB
-    { wch: 24 }, // F: PHÒNG BAN
-    { wch: 24 }, // G: PHÒNG BAN CON
-    { wch: 12 }, // H: MSNV
-    { wch: 20 }, // I: HỌ
-    { wch: 10 }, // J: TÊN
-    { wch: 36 }, // K: CÔNG VIỆC
-    { wch: 14 }, // L: NGÀY VÀO
+    { wch: 6 }, // A: STT (No)
+    { wch: 10, hidden: true }, // B: ẩn
+    { wch: 10, hidden: true }, // C: ẩn
+    { wch: 16, hidden: true }, // D: ẩn
+    { wch: 22 }, // E: PHÒNG BAN CON (Bophancon6)
+    { wch: 14 }, // F: MSNV (Manhanvien2222)
+    { wch: 20 }, // G: HỌ (Ho)
+    { wch: 10 }, // H: TÊN (Ten)
+    { wch: 34 }, // I: CÔNG VIỆC (Congviec)
+    { wch: 14 }, // J: NGÀY VÀO (Ngayvaocty)
   ];
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'DanhSachNhanVien');
@@ -235,40 +279,87 @@ export function downloadSampleExcelTemplate() {
 }
 
 export function exportEmployeesToExcel(employees: Employee[]) {
-  const rows = employees.map((emp, idx) => {
+  const aoa: unknown[][] = [
+    [
+      'VIETSUN',
+      '',
+      '',
+      '',
+      '',
+      '',
+      'DANH SÁCH CÁN BỘ CÔNG NHÂN VIÊN',
+      '',
+      '',
+      '',
+    ],
+    ['Warming Your Life', '', '', '', '', '', '', '', '', ''],
+    [
+      'STT',
+      'ĐƠN VỊ',
+      'KHỐI',
+      'PHÒNG BAN',
+      'PHÒNG BAN CON',
+      'MSNV',
+      'HỌ',
+      'TÊN',
+      'CÔNG VIỆC',
+      'NGÀY VÀO',
+    ],
+    ['', '', '', '', '', '', '', '', '', ''],
+    [
+      'No',
+      'Donvi',
+      'Khoi',
+      'Bophan5',
+      'Bophancon6',
+      'Manhanvien2222',
+      'Ho',
+      'Ten',
+      'Congviec',
+      'Ngayvaocty',
+    ],
+  ];
+
+  employees.forEach((emp, idx) => {
     const parts = emp.fullName.trim().split(/\s+/);
     const ten = parts.length > 1 ? parts[parts.length - 1] : emp.fullName;
     const ho = parts.length > 1 ? parts.slice(0, -1).join(' ') : '';
-    return {
-      STT: idx + 1,
-      'ĐƠN VỊ': 'XMAY 03',
-      'Tình trạng': 'LV',
-      KHỐI: '',
-      'KÝ HIỆU PB': '',
-      'PHÒNG BAN': emp.department,
-      'PHÒNG BAN CON': emp.department,
-      MSNV: emp.msnv,
-      HỌ: ho,
-      TÊN: ten,
-      'CÔNG VIỆC': '',
-      'NGÀY VÀO': emp.joinDate,
-    };
+    aoa.push([
+      idx + 1,
+      'VIETSUN',
+      '',
+      emp.department,
+      emp.department,
+      emp.msnv,
+      ho,
+      ten,
+      '',
+      emp.joinDate,
+    ]);
   });
 
-  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+  worksheet['!merges'] = [
+    { s: { r: 0, c: 6 }, e: { r: 1, c: 9 } },
+    { s: { r: 2, c: 0 }, e: { r: 3, c: 0 } },
+    { s: { r: 2, c: 4 }, e: { r: 3, c: 4 } },
+    { s: { r: 2, c: 5 }, e: { r: 3, c: 5 } },
+    { s: { r: 2, c: 6 }, e: { r: 3, c: 6 } },
+    { s: { r: 2, c: 7 }, e: { r: 3, c: 7 } },
+    { s: { r: 2, c: 8 }, e: { r: 3, c: 8 } },
+    { s: { r: 2, c: 9 }, e: { r: 3, c: 9 } },
+  ];
   worksheet['!cols'] = [
-    { wch: 6 },
-    { wch: 11 },
-    { wch: 10 },
-    { wch: 10 },
-    { wch: 12 },
-    { wch: 24 },
-    { wch: 24 },
-    { wch: 12 },
-    { wch: 20 },
-    { wch: 10 },
-    { wch: 30 },
-    { wch: 14 },
+    { wch: 6 }, // A: STT
+    { wch: 10, hidden: true }, // B
+    { wch: 10, hidden: true }, // C
+    { wch: 16, hidden: true }, // D
+    { wch: 22 }, // E: PHÒNG BAN CON
+    { wch: 14 }, // F: MSNV
+    { wch: 20 }, // G: HỌ
+    { wch: 10 }, // H: TÊN
+    { wch: 30 }, // I: CÔNG VIỆC
+    { wch: 14 }, // J: NGÀY VÀO
   ];
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'DanhSachNhanVien');
@@ -292,6 +383,15 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [selectedSheetName, setSelectedSheetName] = useState<string>('');
   const [detectedColumnsNote, setDetectedColumnsNote] = useState<string>('');
+  const [detectedCols, setDetectedCols] = useState<DetectedColMap>({
+    stt: 'A',
+    dept: 'E',
+    msnv: 'F',
+    ho: 'G',
+    ten: 'H',
+    job: 'I',
+    date: 'J',
+  });
   const [onlyVisibleExcelRows, setOnlyVisibleExcelRows] = useState<boolean>(true);
   const [isParsingFile, setIsParsingFile] = useState<boolean>(false);
 
@@ -341,10 +441,10 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       const deptClean = row.department.trim();
       const dateClean = row.joinDate.trim();
 
-      if (!msnvClean) errors.push('Thiếu MSNV (Cột H)');
-      if (!nameClean) errors.push('Thiếu Họ / Tên (Cột I, J)');
-      if (!deptClean) errors.push('Thiếu Phòng ban con (Cột G)');
-      if (!dateClean) errors.push('Thiếu Ngày vào (Cột L)');
+      if (!msnvClean) errors.push('Thiếu MSNV');
+      if (!nameClean) errors.push('Thiếu Họ / Tên');
+      if (!deptClean) errors.push('Thiếu Phòng ban con');
+      if (!dateClean) errors.push('Thiếu Ngày vào');
 
       if (msnvClean.length > 50) errors.push('MSNV vượt quá 50 ký tự');
       if (nameClean.length > 120) errors.push('Họ và tên vượt quá 120 ký tự');
@@ -376,6 +476,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
       return {
         rowNumber: row.rowNumber,
+        stt: row.stt,
         msnv: msnvClean,
         lastName: row.lastName,
         firstName: row.firstName,
@@ -390,7 +491,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         selected: !isError && !deselectedRowNums.has(row.rowNumber),
       };
     });
-  }, [activeRawRows, importMode, existingMap, deselectedRowNums, rowPhotos]);
+  }, [activeRawRows, importMode, existingMap, deselectedRowNums, rowPhotos, detectedCols]);
 
   const stats = useMemo(() => {
     const totalRows = evaluatedRows.length;
@@ -434,154 +535,197 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     const maxScanHeaderRow = Math.min(range.e.r, 60);
     const maxScanCol = Math.min(range.e.c, 35);
 
-    // Default column mapping: Exact Excel Columns G -> L (0-based indices: G=6, H=7, I=8, J=9, K=10, L=11)
-    let colDept = 6;   // Cột G: PHÒNG BAN CON (Bophancon6)
-    let colMsnv = 7;   // Cột H: MSNV (Manhanvien)
-    let colHo = 8;     // Cột I: HỌ (Ho)
-    let colTen = 9;    // Cột J: TÊN (Ten)
+    // Default column mapping matching the new VietSun Excel structure:
+    // Col A (0): STT (No)
+    // Col E (4): PHÒNG BAN CON (Bophancon6)
+    // Col F (5): MSNV (Manhanvien2222)
+    // Col G (6): HỌ (Ho)
+    // Col H (7): TÊN (Ten)
+    // Col I (8): CÔNG VIỆC (Congviec)
+    // Col J (9): NGÀY VÀO (Ngayvaocty)
+    let colStt = 0;    // Cột A: STT (No)
+    let colDept = 4;   // Cột E: PHÒNG BAN CON (Bophancon6)
+    let colMsnv = 5;   // Cột F: MSNV (Manhanvien2222)
+    let colHo = 6;     // Cột G: HỌ (Ho)
+    let colTen = 7;    // Cột H: TÊN (Ten)
     let colFullName = -1;
-    let colJob = 10;   // Cột K: CÔNG VIỆC (Congviec)
-    let colDate = 11;  // Cột L: NGÀY VÀO (Ngayvaocty)
+    let colJob = 8;    // Cột I: CÔNG VIỆC (Congviec)
+    let colDate = 9;   // Cột J: NGÀY VÀO (Ngayvaocty)
     let dataStartRow = 0;
 
-    // Scan first 60 rows to find the Vietnamese header row or sub-header row (Bophancon6 | Manhanvien | Ho | Ten | Congviec | Ngayvaocty)
-    let headerRowIdx = -1;
+    // Scan first 60 rows to find BOTH the Vietnamese header row (e.g. Row 3-4 merged) AND the code sub-header row (e.g. Row 5: No | Bophancon6 | Manhanvien2222 | Ho | Ten | Congviec | Ngayvaocty)
+    let vnHeaderRowIdx = -1;
+    let codeSubHeaderRowIdx = -1;
+
     for (let r = 0; r <= maxScanHeaderRow; r++) {
-      let rowHasMsnv = false;
-      let rowHasDeptOrName = false;
+      let hasVnMsnv = false;
+      let hasVnDeptOrName = false;
+      let hasCodeSubHeader = false;
+
       for (let c = 0; c <= maxScanCol; c++) {
         const s = stripViAccents(readCellText(worksheet, r, c));
         if (!s) continue;
-        if (
-          s === 'msnv' ||
-          s.startsWith('manh') ||
-          s.includes('ma so nhan vien') ||
-          s === 'ma nv'
-        ) {
-          rowHasMsnv = true;
+
+        if (s === 'msnv' || s.includes('ma so nhan vien') || s === 'ma nv') {
+          hasVnMsnv = true;
         }
         if (
           s.includes('phong ban') ||
-          s.includes('bophan') ||
           s.includes('bo phan') ||
           s === 'ho' ||
           s === 'ho va ten'
         ) {
-          rowHasDeptOrName = true;
+          hasVnDeptOrName = true;
+        }
+        if (
+          s.includes('bophancon') ||
+          s.startsWith('manhanvien') ||
+          s.includes('ngayvaocty') ||
+          s === 'congviec'
+        ) {
+          hasCodeSubHeader = true;
         }
       }
-      if (rowHasMsnv && rowHasDeptOrName) {
-        headerRowIdx = r;
+
+      if (vnHeaderRowIdx === -1 && hasVnMsnv && hasVnDeptOrName) {
+        vnHeaderRowIdx = r;
+      }
+      if (codeSubHeaderRowIdx === -1 && hasCodeSubHeader) {
+        codeSubHeaderRowIdx = r;
+      }
+      if (vnHeaderRowIdx !== -1 && codeSubHeaderRowIdx !== -1 && r > vnHeaderRowIdx + 3) {
         break;
       }
     }
 
-    if (headerRowIdx !== -1) {
-      const hRow: string[] = [];
-      const nextRow: string[] = [];
-      for (let c = 0; c <= maxScanCol; c++) {
-        hRow[c] = stripViAccents(readCellText(worksheet, headerRowIdx, c));
-        nextRow[c] = stripViAccents(readCellText(worksheet, headerRowIdx + 1, c));
-      }
+    const anchorRowIdx = vnHeaderRowIdx !== -1 ? vnHeaderRowIdx : codeSubHeaderRowIdx;
 
-      // Check if headerRowIdx + 1 is the English code sub-header row (No | Donvi | ... | Bophancon6 | Manhanvien | Ho | Ten | Congviec | Ngayvaocty)
-      const isNextRowSubHeader = nextRow.some(
-        (s) =>
-          s.includes('bophan') ||
-          s.startsWith('manh') ||
-          s.includes('ngayvao') ||
-          s === 'congviec' ||
-          s.startsWith('donvi') ||
-          s.startsWith('tinhtrang')
+    if (anchorRowIdx !== -1) {
+      // Collect header tokens across a 4-row window (handles merged Rows 3-4 + Row 5 code row)
+      const scanEndR = Math.min(
+        maxScanHeaderRow,
+        Math.max(anchorRowIdx + 3, codeSubHeaderRowIdx !== -1 ? codeSubHeaderRowIdx : anchorRowIdx)
       );
 
-      dataStartRow = isNextRowSubHeader ? headerRowIdx + 2 : headerRowIdx + 1;
-
-      // Check if Columns G -> L (indices 6 -> 11) match the standard VietSun HR layout
-      const isColGtoL =
-        hRow[7] === 'msnv' ||
-        nextRow[7]?.startsWith('manh') ||
-        hRow[6]?.includes('phong ban con') ||
-        nextRow[6]?.includes('bophancon');
-
-      if (isColGtoL) {
-        colDept = 6;
-        colMsnv = 7;
-        colHo = 8;
-        colTen = 9;
-        colFullName = -1;
-        colJob = 10;
-        colDate = 11;
+      // Determine where actual employee data rows start
+      if (codeSubHeaderRowIdx !== -1 && codeSubHeaderRowIdx >= anchorRowIdx) {
+        dataStartRow = codeSubHeaderRowIdx + 1;
       } else {
-        // Find where MSNV is located
-        const findCol = (pred: (s: string) => boolean): number => {
-          for (let c = 0; c <= maxScanCol; c++) {
-            if (pred(hRow[c] || '')) return c;
+        // Check if anchorRowIdx is vertically merged across 2 rows (e.g. Row 3-4)
+        const merges = worksheet['!merges'] || [];
+        let maxMergedRow = anchorRowIdx;
+        for (const m of merges) {
+          if (m.s.r === anchorRowIdx && m.e.r > maxMergedRow && m.e.r <= anchorRowIdx + 2) {
+            maxMergedRow = m.e.r;
           }
-          if (isNextRowSubHeader) {
-            for (let c = 0; c <= maxScanCol; c++) {
-              if (pred(nextRow[c] || '')) return c;
-            }
-          }
-          return -1;
-        };
-
-        const foundDeptSub = findCol(
-          (s) => s.includes('phong ban con') || s.includes('bophancon')
-        );
-        const foundMsnv = findCol(
-          (s) => s === 'msnv' || s.startsWith('manh') || s.includes('ma so') || s === 'ma nv'
-        );
-        const foundHo = findCol((s) => s === 'ho' || s === 'ho dem');
-        const foundTen = findCol((s) => s === 'ten');
-        const foundFullName = findCol(
-          (s) => s.includes('ho va ten') || s === 'ho ten'
-        );
-        const foundJob = findCol(
-          (s) => s.includes('cong viec') || s.includes('congviec')
-        );
-        const foundDate = findCol(
-          (s) => s.includes('ngay vao') || s.includes('ngayvao')
-        );
-
-        // If PHÒNG BAN CON and MSNV are adjacent (like G & H shifted to another start column), lock the 6-column block G..L relative to foundDeptSub or foundMsnv!
-        if (foundMsnv !== -1 && foundHo === foundMsnv + 1 && foundTen === foundMsnv + 2) {
-          colDept = foundDeptSub !== -1 ? foundDeptSub : Math.max(0, foundMsnv - 1);
-          colMsnv = foundMsnv;
-          colHo = foundMsnv + 1;
-          colTen = foundMsnv + 2;
-          colFullName = -1;
-          colJob = foundJob !== -1 ? foundJob : foundMsnv + 3;
-          colDate = foundDate !== -1 ? foundDate : foundMsnv + 4;
-        } else {
-          const foundDeptAny = findCol(
-            (s) => s.includes('bo phan') || s.includes('phong ban') || s.includes('bophan')
-          );
-          if (foundDeptSub !== -1) colDept = foundDeptSub;
-          else if (foundDeptAny !== -1) colDept = foundDeptAny;
-
-          if (foundMsnv !== -1) colMsnv = foundMsnv;
-          if (foundHo !== -1 && foundTen !== -1) {
-            colHo = foundHo;
-            colTen = foundTen;
-            colFullName = -1;
-          } else if (foundFullName !== -1) {
-            colFullName = foundFullName;
-            colHo = -1;
-            colTen = -1;
-          }
-          if (foundJob !== -1) colJob = foundJob;
-          if (foundDate !== -1) colDate = foundDate;
         }
+        // Also check if the row after maxMergedRow is a code sub-header row
+        const afterMergeR = maxMergedRow + 1;
+        let isAfterMergeSubHeader = false;
+        for (let c = 0; c <= maxScanCol; c++) {
+          const s = stripViAccents(readCellText(worksheet, afterMergeR, c));
+          if (
+            s.includes('bophan') ||
+            s.startsWith('manh') ||
+            s.includes('ngayvao') ||
+            s === 'congviec' ||
+            s === 'no'
+          ) {
+            isAfterMergeSubHeader = true;
+            break;
+          }
+        }
+        dataStartRow = isAfterMergeSubHeader ? afterMergeR + 1 : maxMergedRow + 1;
+      }
+
+      // Build combined header tokens per column across [anchorRowIdx .. scanEndR]
+      const colTokens: string[][] = [];
+      for (let c = 0; c <= maxScanCol; c++) {
+        const tokens: string[] = [];
+        for (let r = anchorRowIdx; r <= scanEndR; r++) {
+          if (r >= dataStartRow) break;
+          const t = stripViAccents(readCellText(worksheet, r, c));
+          if (t) tokens.push(t);
+        }
+        colTokens[c] = tokens;
+      }
+
+      const findCol = (pred: (s: string) => boolean): number => {
+        for (let c = 0; c <= maxScanCol; c++) {
+          if ((colTokens[c] || []).some(pred)) return c;
+        }
+        return -1;
+      };
+
+      const foundStt = findCol((s) => s === 'stt' || s === 'no');
+      const foundDeptSub = findCol(
+        (s) => s.includes('phong ban con') || s.includes('bophancon')
+      );
+      const foundMsnv = findCol(
+        (s) =>
+          s === 'msnv' ||
+          s.startsWith('manhanvien') ||
+          s.startsWith('manh') ||
+          s.includes('ma so') ||
+          s === 'ma nv'
+      );
+      const foundHo = findCol((s) => s === 'ho' || s === 'ho dem');
+      const foundTen = findCol((s) => s === 'ten');
+      const foundFullName = findCol(
+        (s) => s.includes('ho va ten') || s === 'ho ten'
+      );
+      const foundJob = findCol(
+        (s) => s.includes('cong viec') || s.includes('congviec')
+      );
+      const foundDate = findCol(
+        (s) => s.includes('ngay vao') || s.includes('ngayvao')
+      );
+
+      if (foundStt !== -1) colStt = foundStt;
+
+      // If PHÒNG BAN CON, MSNV, HỌ, TÊN are adjacent (e.g. E, F, G, H, I, J as in screenshot, or B..G, or G..L)
+      if (foundMsnv !== -1 && foundHo === foundMsnv + 1 && foundTen === foundMsnv + 2) {
+        colDept = foundDeptSub !== -1 ? foundDeptSub : Math.max(0, foundMsnv - 1);
+        colMsnv = foundMsnv;
+        colHo = foundMsnv + 1;
+        colTen = foundMsnv + 2;
+        colFullName = -1;
+        colJob = foundJob !== -1 ? foundJob : foundMsnv + 3;
+        colDate = foundDate !== -1 ? foundDate : foundMsnv + 4;
+      } else {
+        const foundDeptAny = findCol(
+          (s) => s.includes('bo phan') || s.includes('phong ban') || s.includes('bophan')
+        );
+        if (foundDeptSub !== -1) colDept = foundDeptSub;
+        else if (foundDeptAny !== -1) colDept = foundDeptAny;
+
+        if (foundMsnv !== -1) colMsnv = foundMsnv;
+        if (foundHo !== -1 && foundTen !== -1) {
+          colHo = foundHo;
+          colTen = foundTen;
+          colFullName = -1;
+        } else if (foundFullName !== -1) {
+          colFullName = foundFullName;
+          colHo = -1;
+          colTen = -1;
+        }
+        if (foundJob !== -1) colJob = foundJob;
+        if (foundDate !== -1) colDate = foundDate;
       }
     }
 
     const colLetter = (c: number) => (c >= 0 ? XLSX.utils.encode_col(c) : '?');
-    setDetectedColumnsNote(
-      colFullName >= 0
-        ? `Sheet "${sheetName}" · Cột Bộ phận: ${colLetter(colDept)} · MSNV: ${colLetter(colMsnv)} · Họ tên: ${colLetter(colFullName)} · Ngày vào: ${colLetter(colDate)}`
-        : `Sheet "${sheetName}" · Cột ${colLetter(colDept)} (Phòng ban con) · Cột ${colLetter(colMsnv)} (MSNV) · Cột ${colLetter(colHo)} (Họ) · Cột ${colLetter(colTen)} (Tên) · Cột ${colLetter(colJob)} (Công việc) · Cột ${colLetter(colDate)} (Ngày vào)`
-    );
+    const nextDetectedCols: DetectedColMap = {
+      stt: colLetter(colStt),
+      dept: colLetter(colDept),
+      msnv: colLetter(colMsnv),
+      ho: colFullName >= 0 ? colLetter(colFullName) : colLetter(colHo),
+      ten: colFullName >= 0 ? colLetter(colFullName) : colLetter(colTen),
+      job: colLetter(colJob),
+      date: colLetter(colDate),
+    };
+    setDetectedCols(nextDetectedCols);
+    setDetectedColumnsNote('');
 
     const rowProps = worksheet['!rows'] || [];
     const extracted: RawExtractedRow[] = [];
@@ -589,6 +733,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     const maxRow = Math.min(range.e.r, 20000);
 
     for (let r = dataStartRow; r <= maxRow; r++) {
+      const sttVal = colStt >= 0 ? readCellText(worksheet, r, colStt) : '';
       const deptVal = readCellText(worksheet, r, colDept);
       const msnvVal = readCellText(worksheet, r, colMsnv);
       const hoVal = colHo >= 0 ? readCellText(worksheet, r, colHo) : '';
@@ -607,15 +752,18 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       }
       emptyStreak = 0;
 
-      // Skip repeated header / sub-header / filter code rows
+      // Skip repeated header / sub-header / filter code rows (e.g. No | Bophancon6 | Manhanvien2222 | Ho | Ten | Congviec | Ngayvaocty)
       const msnvCheck = stripViAccents(msnvVal);
       const deptCheck = stripViAccents(deptVal);
       const hoCheck = stripViAccents(hoVal);
+      const sttCheck = stripViAccents(sttVal);
       if (
         msnvCheck === 'msnv' ||
         msnvCheck.startsWith('manh') ||
         deptCheck === 'phong ban con' ||
         deptCheck.startsWith('bophancon') ||
+        sttCheck === 'stt' ||
+        sttCheck === 'no' ||
         (hoCheck === 'ho' && stripViAccents(tenVal) === 'ten')
       ) {
         continue;
@@ -638,6 +786,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
       extracted.push({
         rowNumber: r + 1,
+        stt: sttVal || String(extracted.length + 1),
         msnv: msnvVal,
         lastName: splitHo,
         firstName: splitTen,
@@ -651,7 +800,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
     if (extracted.length === 0) {
       setParseError(
-        `Sheet "${sheetName}" không có dòng dữ liệu nhân viên nào tại các cột G -> L (PHÒNG BAN CON, MSNV, HỌ, TÊN, CÔNG VIỆC, NGÀY VÀO). Nếu dữ liệu nằm ở Sheet khác, vui lòng chọn Sheet tương ứng bên dưới.`
+        `Sheet "${sheetName}" không có dòng dữ liệu nhân viên nào. Nếu dữ liệu nằm ở Sheet khác, vui lòng chọn Sheet tương ứng bên dưới.`
       );
       setAllExtractedRows([]);
       return;
@@ -690,7 +839,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
           return;
         }
 
-        // Smartly pick the best Sheet: prefer the sheet that contains PHÒNG BAN CON / Bophancon6 & MSNV / Manhanvien, and prefer Excel's activeTab
+        // Smartly pick the best Sheet: prefer the sheet that contains PHÒNG BAN CON / Bophancon6 & MSNV / Manhanvien2222, and prefer Excel's activeTab
         const wbProps = wb.Workbook as
           | {
               WBView?: Array<{ activeTab?: number }>;
@@ -847,11 +996,8 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
             <FileSpreadsheet className="w-6 h-6" />
             <div>
               <h2 className="text-lg font-bold">
-                Import Danh Sách Nhân Viên Từ File Excel (Cột G → L)
+                Import Danh Sách Cán Bộ Công Nhân Viên Từ File Excel
               </h2>
-              <p className="text-xs text-blue-100">
-                Tự động đọc chuẩn từ Cột G → L: PHÒNG BAN CON (G) · MSNV (H) · HỌ (I) · TÊN (J) · CÔNG VIỆC (K) · NGÀY VÀO (L)
-              </p>
             </div>
           </div>
           <button
@@ -871,7 +1017,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
             <div className="lg:col-span-7 flex flex-col justify-between gap-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-sm font-semibold text-slate-800">
-                  1. Chọn file Excel nhân sự (.xlsx, .xls) — Tự động lấy Cột G → L
+                  1. Chọn file Excel nhân sự (.xlsx, .xls)
                 </span>
                 <button
                   type="button"
@@ -879,7 +1025,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  Tải File Excel Mẫu Chuẩn (Cột A → L)
+                  Tải File Excel Mẫu
                 </button>
               </div>
 
@@ -911,9 +1057,6 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                         ? `Đã tải file: ${fileName} (Bấm hoặc kéo thả để chọn lại file)`
                         : 'Bấm vào đây hoặc kéo thả file Excel (.xlsx, .xls) từ máy tính'}
                   </div>
-                  <div className="text-xs text-slate-500">
-                    Đọc trực tiếp Cột G → L: G (Phòng ban con) · H (MSNV) · I (Họ) · J (Tên) · K (Công việc) · L (Ngày vào)
-                  </div>
                 </div>
                 <input
                   ref={fileInputRef}
@@ -924,10 +1067,10 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 />
               </label>
 
-              {/* Sheet Selector & Column Mapping Status */}
-              {(sheetNames.length > 0 || detectedColumnsNote) && (
+              {/* Sheet Selector & Hidden Rows Filter */}
+              {(sheetNames.length > 1 || hiddenRowCountInSheet > 0) && (
                 <div className="flex flex-wrap items-center justify-between gap-2 bg-blue-50/70 border border-blue-200 rounded-lg px-3 py-2 text-xs">
-                  {sheetNames.length > 1 ? (
+                  {sheetNames.length > 1 && (
                     <div className="flex items-center gap-2">
                       <Layers className="w-3.5 h-3.5 text-blue-700 shrink-0" />
                       <span className="font-semibold text-slate-700">Chọn Sheet cần lấy:</span>
@@ -942,11 +1085,6 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                           </option>
                         ))}
                       </select>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1.5 text-blue-800 font-semibold">
-                      <Layers className="w-3.5 h-3.5 shrink-0" />
-                      <span>{detectedColumnsNote}</span>
                     </div>
                   )}
 
@@ -1143,37 +1281,33 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 </div>
               </div>
 
-              {/* Data Table (Columns G -> L matching VietSun HR Excel sheet) */}
+              {/* Data Table */}
               <div className="border border-slate-200 rounded-lg overflow-hidden max-h-[380px] overflow-x-auto overflow-y-auto">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead className="bg-slate-100 text-slate-700 sticky top-0 z-10 border-b border-slate-200">
                     <tr>
                       <th className="py-2.5 px-2.5 w-10 text-center">Chọn</th>
-                      <th className="py-2.5 px-2.5 w-14 font-mono-num">Dòng</th>
-                      <th className="py-2.5 px-2.5 w-18 text-center">Ảnh 25×35</th>
-                      <th className="py-2.5 px-2.5">
-                        <span className="block font-bold text-slate-900">PHÒNG BAN CON (Cột G)</span>
-                        <span className="text-[10px] font-normal text-slate-500 font-mono-num">Bophancon6</span>
+                      <th className="py-2.5 px-2.5 w-14 text-center font-bold text-slate-900">
+                        STT
                       </th>
-                      <th className="py-2.5 px-2.5 w-24">
-                        <span className="block font-bold text-slate-900">MSNV (Cột H)</span>
-                        <span className="text-[10px] font-normal text-slate-500 font-mono-num">Manhanvien</span>
+                      <th className="py-2.5 px-2.5 w-18 text-center">Ảnh 3×4</th>
+                      <th className="py-2.5 px-2.5 font-bold text-slate-900">
+                        PHÒNG BAN CON
                       </th>
-                      <th className="py-2.5 px-2.5">
-                        <span className="block font-bold text-slate-900">HỌ (Cột I)</span>
-                        <span className="text-[10px] font-normal text-slate-500 font-mono-num">Ho</span>
+                      <th className="py-2.5 px-2.5 w-28 font-bold text-slate-900">
+                        MSNV
                       </th>
-                      <th className="py-2.5 px-2.5 w-20">
-                        <span className="block font-bold text-slate-900">TÊN (Cột J)</span>
-                        <span className="text-[10px] font-normal text-slate-500 font-mono-num">Ten</span>
+                      <th className="py-2.5 px-2.5 font-bold text-slate-900">
+                        HỌ
                       </th>
-                      <th className="py-2.5 px-2.5">
-                        <span className="block font-bold text-slate-900">CÔNG VIỆC (Cột K)</span>
-                        <span className="text-[10px] font-normal text-slate-500 font-mono-num">Congviec</span>
+                      <th className="py-2.5 px-2.5 w-20 font-bold text-slate-900">
+                        TÊN
                       </th>
-                      <th className="py-2.5 px-2.5 w-28">
-                        <span className="block font-bold text-slate-900">NGÀY VÀO (Cột L)</span>
-                        <span className="text-[10px] font-normal text-slate-500 font-mono-num">Ngayvaocty</span>
+                      <th className="py-2.5 px-2.5 font-bold text-slate-900">
+                        CÔNG VIỆC
+                      </th>
+                      <th className="py-2.5 px-2.5 w-28 font-bold text-slate-900">
+                        NGÀY VÀO
                       </th>
                       <th className="py-2.5 px-2.5 w-32">Trạng thái</th>
                       <th className="py-2.5 px-2.5">Ghi chú / Kiểm tra</th>
@@ -1212,14 +1346,17 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                               </button>
                             )}
                           </td>
-                          <td className="py-2 px-2.5 font-mono-num text-slate-500">
-                            #{row.rowNumber}
+                          <td
+                            className="py-2 px-2.5 font-mono-num text-center text-slate-700 font-semibold"
+                            title={`Dòng Excel #${row.rowNumber}`}
+                          >
+                            {row.stt || row.rowNumber}
                           </td>
                           <td className="py-1.5 px-2.5 text-center">
                             {!isError && (
                               <label
                                 className="w-8 h-10 rounded border border-slate-300 bg-white overflow-hidden inline-flex flex-col items-center justify-center cursor-pointer hover:border-blue-600"
-                                title="Bấm để chọn ảnh 25×35mm cho dòng này"
+                                title="Bấm để chọn ảnh 3×4 cho dòng này"
                               >
                                 {row.photoUrl ? (
                                   <img
@@ -1232,7 +1369,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                                   <div className="flex flex-col items-center justify-center text-blue-600">
                                     <Camera className="w-3 h-3" />
                                     <span className="text-[7.5px] font-bold leading-none mt-0.5">
-                                      25×35
+                                      3×4
                                     </span>
                                   </div>
                                 )}
